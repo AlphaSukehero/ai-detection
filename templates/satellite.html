@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Satellite Image Analysis | Remote Sensing Engine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="page">
+        <!-- Top Navigation -->
+        <nav class="navbar">
+            <a href="/" class="nav-brand">
+                <div class="nav-logo" style="background: var(--sat-gradient)">🛰️</div>
+                <div class="nav-brand-text">
+                    <h1>SATELLITE IMAGE ANALYSIS</h1>
+                    <p>Multi-Spectral Remote Sensing & Terrain Classification</p>
+                </div>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-item">&larr; Home</a>
+                <a href="/ecg" class="nav-item">ECG</a>
+                <a href="/brain-tumor" class="nav-item">Brain Tumor MRI</a>
+                <a href="/satellite" class="nav-item active">Satellite</a>
+            </div>
+        </nav>
+
+        <div class="main-container">
+            <!-- Upload Panel -->
+            <div class="panel">
+                <div class="panel-title">
+                    <span>🛰️</span> Upload Satellite Imagery
+                </div>
+                <div class="panel-subtitle">
+                    Upload multi-spectral satellite imagery or land cover photography (.jpg, .png, .tif / GeoTIFF) for AI-based terrain classification, vegetation index estimation (NDVI), and environmental health metrics.
+                </div>
+
+                {% if error %}
+                <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
+                    <strong>⚠ Error:</strong> {{ error }}
+                </div>
+                {% endif %}
+
+                <form action="/analyze_satellite" method="POST" enctype="multipart/form-data" id="sat-form">
+                    <div class="upload-dropzone" onclick="document.getElementById('satellite_file').click();">
+                        <div class="upload-icon">🌍</div>
+                        <h3 style="margin-bottom: 6px; font-weight: 600;">Drag & Drop Satellite Image here or click to browse</h3>
+                        <p style="color: var(--text-muted); font-size: 13px;">Supports GeoTIFF / JPG / PNG / WEBP images up to 32 MB</p>
+                        <input type="file" name="satellite_file" id="satellite_file" class="file-input" accept="image/*,.tif,.tiff" onchange="document.getElementById('sat-form').submit();">
+                    </div>
+
+                    <!-- Quick Sample Buttons -->
+                    <div style="text-align: center; margin-top: 20px;">
+                        <span style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 10px;">Or test immediately with built-in satellite samples:</span>
+                        <div class="sample-buttons">
+                            <button type="submit" name="sample_name" value="glioma" class="btn-sample">🌲 Forest / Vegetation Sample</button>
+                            <button type="submit" name="sample_name" value="meningioma" class="btn-sample">🏙️ Urban / Built-up Sample</button>
+                            <button type="submit" name="sample_name" value="notumor" class="btn-sample">🌊 Water Body Sample</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Result Display -->
+            {% if result %}
+            <div class="result-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
+                    <div>
+                        <div class="status-badge good">
+                            CLASSIFIED: {{ result.prediction | upper }}
+                        </div>
+                        <h2 style="font-family: var(--font-heading); font-size: 28px; margin-bottom: 6px;">
+                            Terrain Type: {{ result.prediction }}
+                        </h2>
+                        <p style="color: var(--text-secondary); font-size: 15px;">Model Confidence: <strong>{{ result.confidence }}%</strong></p>
+                    </div>
+
+                    <!-- Download PDF Form -->
+                    <form action="/download_satellite_report" method="POST">
+                        <input type="hidden" name="prediction" value="{{ result.prediction }}">
+                        <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                        <input type="hidden" name="ndvi" value="{{ result.ndvi }}">
+                        <input type="hidden" name="health" value="{{ result.environmental_health }}">
+                        <button type="submit" class="btn-primary" style="width: auto; padding: 10px 20px;">
+                            📄 Download PDF Report
+                        </button>
+                    </form>
+                </div>
+
+                <!-- Key Remote Sensing Metrics -->
+                <div class="grid-metrics">
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated NDVI</div>
+                        <div class="metric-value" style="color: var(--success);">{{ result.ndvi }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Environmental Health</div>
+                        <div class="metric-value" style="color: #60a5fa;">{{ result.environmental_health }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Primary Class</div>
+                        <div class="metric-value" style="font-size: 16px;">{{ result.prediction }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">AI Confidence</div>
+                        <div class="metric-value" style="color: #a78bfa;">{{ result.confidence }}%</div>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 24px;">
+                    <!-- Image Preview -->
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color);">
+                        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600;">PROCESSED SATELLITE IMAGE</div>
+                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="Satellite Image" style="max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: contain;">
+                    </div>
+
+                    <!-- Land Cover Distribution -->
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
+                        <h4 style="font-family: var(--font-heading); margin-bottom: 16px; font-size: 16px;">Land Cover Coverage Estimate</h4>
+                        {% for cover_type, percentage in result.land_breakdown.items() %}
+                        <div style="margin-bottom: 14px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px;">
+                                <span style="color: var(--text-primary); font-weight: 500;">{{ cover_type }}</span>
+                                <span style="color: var(--text-secondary); font-weight: 600;">{{ percentage }}</span>
+                            </div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar-fill" style="width: {{ percentage }}; background: var(--sat-gradient);"></div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Analysis Summary -->
+                <div style="grid-column: 1 / -1; margin-top: 24px; background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
+                    <h4 style="color: #60a5fa; margin-bottom: 8px; font-size: 16px;">🌐 Terrain Analysis Summary</h4>
+                    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 14px; line-height: 1.6;">{{ result.findings }}</p>
+                    
+                    <h4 style="color: #60a5fa; margin-bottom: 8px; font-size: 16px;">🌱 Recommended Environmental Monitoring</h4>
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6;">{{ result.recommendation }}</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <footer>
+            <p>&copy; 2026 Unified AI Analysis Engine. Satellite Remote Sensing Prototype Platform.</p>
+        </footer>
+    </div>
+</body>
+</html>

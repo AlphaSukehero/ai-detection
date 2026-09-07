@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Medical & Satellite Analysis Platform</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="page">
+        <!-- Top Navigation -->
+        <nav class="navbar">
+            <a href="/" class="nav-brand">
+                <div class="nav-logo">AI</div>
+                <div class="nav-brand-text">
+                    <h1>UNIFIED AI PLATFORM</h1>
+                    <p>Medical & Remote Sensing Intelligence</p>
+                </div>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-item active">Dashboard</a>
+                <a href="/ecg" class="nav-item">ECG Analysis</a>
+                <a href="/brain-tumor" class="nav-item">Brain Tumor MRI</a>
+                <a href="/satellite" class="nav-item">Satellite Analysis</a>
+            </div>
+        </nav>
+
+        <!-- Hero Section -->
+        <header class="hero">
+            <div class="hero-badge">
+                <span class="dot"></span> NEXT-GEN MULTI-DOMAIN AI ENGINE
+            </div>
+            <h1>Artificial Intelligence Platform</h1>
+            <p>Integrated deep learning and neural network algorithms for high-accuracy diagnostic imaging and remote sensing analytics.</p>
+        </header>
+
+        <!-- Module Cards -->
+        <main class="dashboard-container">
+            <!-- Brain Tumor Card -->
+            <div class="dashboard-card brain-card">
+                <div class="card-icon brain">🧠</div>
+                <h2>Brain Tumor MRI Detection</h2>
+                <p>Advanced convolutional neural network (VGG16 Architecture) for multi-class brain tumor classification from magnetic resonance imaging.</p>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>4-Class MRI Tumor Classification</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Radiological Diagnostic Summary</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>PDF Report Generation</span>
+                    </div>
+                </div>
+                <a href="/brain-tumor" class="btn-primary">
+                    Launch MRI Dashboard &rarr;
+                </a>
+            </div>
+
+            <!-- ECG Card -->
+            <div class="dashboard-card ecg-card">
+                <div class="card-icon ecg">❤️</div>
+                <h2>ECG Signal Analysis</h2>
+                <p>Hybrid Convolutional Neural Network (QCNN) running 8-qubit circuits for automated cardiac rhythm & arrhythmia detection.</p>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>8-Qubit PennyLane Circuit</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Waveform Parameter Extraction (HR, QRS, QTc)</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Clinical PDF Diagnostic Report</span>
+                    </div>
+                </div>
+                <a href="/ecg" class="btn-primary">
+                    Launch ECG Dashboard &rarr;
+                </a>
+            </div>
+
+            <!-- Satellite Card -->
+            <div class="dashboard-card sat-card">
+                <div class="card-icon satellite">🛰️</div>
+                <h2>Satellite Remote Sensing</h2>
+                <p>Deep land cover classification (EfficientNet Architecture) with multi-spectral vegetation index estimation and environmental scoring.</p>
+                <div class="features-list">
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Terrain & Land Cover Classification</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Estimated NDVI Vegetation Index</span>
+                    </div>
+                    <div class="feature-item">
+                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="5 13l4 4L19 7"/></svg>
+                        <span>Environmental PDF Export</span>
+                    </div>
+                </div>
+                <a href="/satellite" class="btn-primary">
+                    Launch Satellite Dashboard &rarr;
+                </a>
+            </div>
+        </main>
+
+        <!-- Footer -->
+        <footer>
+            <p>&copy; 2026 Unified AI Analysis Engine. Research & Educational Prototype Platform.</p>
+        </footer>
+    </div>
+</body>
+</html>

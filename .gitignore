@@ -1,0 +1,41 @@
+# Virtual environment
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Ruff cache
+.ruff_cache/
+
+# Model files (too large for git)
+model/
+*.keras
+*.h5
+*.pkl
+*.npy
+*.pth
+*.pt
+*.onnx
+*.tflite
+
+# Dataset (too large for git - download separately)
+dataset/
+
+# Uploads
+uploads/
+
+# Log files
+*.log
+
+# Ralph config
+.ralph/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/

@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Brain Tumor MRI Detection | AI Medical Engine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="page">
+        <!-- Top Navigation -->
+        <nav class="navbar">
+            <a href="/" class="nav-brand">
+                <div class="nav-logo" style="background: var(--mri-gradient)">🧠</div>
+                <div class="nav-brand-text">
+                    <h1>BRAIN TUMOR MRI ANALYSIS</h1>
+                    <p>Convolutional Neural Network Medical Diagnostic Engine</p>
+                </div>
+            </a>
+            <div class="nav-links">
+                <a href="/" class="nav-item">&larr; Home</a>
+                <a href="/ecg" class="nav-item">ECG</a>
+                <a href="/brain-tumor" class="nav-item active">Brain Tumor MRI</a>
+                <a href="/satellite" class="nav-item">Satellite</a>
+            </div>
+        </nav>
+
+        <div class="main-container">
+            <!-- Upload Panel -->
+            <div class="panel">
+                <div class="panel-title">
+                    <span>🧠</span> Upload Brain MRI Image
+                </div>
+                <div class="panel-subtitle">
+                    Select or upload a brain magnetic resonance imaging scan (.jpg, .jpeg, .png, .dcm / DICOM) for deep AI classification across 4 target classes: Glioma, Meningioma, Pituitary Tumor, or No Tumor.
+                </div>
+
+                {% if error %}
+                <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
+                    <strong>⚠ Error:</strong> {{ error }}
+                </div>
+                {% endif %}
+
+                <form action="/analyze_brain_tumor" method="POST" enctype="multipart/form-data" id="mri-form">
+                    <div class="upload-dropzone" onclick="document.getElementById('mri_file').click();">
+                        <div class="upload-icon">📁</div>
+                        <h3 style="margin-bottom: 6px; font-weight: 600;">Drag & Drop MRI scan here or click to browse</h3>
+                        <p style="color: var(--text-muted); font-size: 13px;">Supports JPG / PNG / DICOM images up to 32 MB</p>
+                        <input type="file" name="mri_file" id="mri_file" class="file-input" accept="image/*,.dcm,.dicom" onchange="document.getElementById('mri-form').submit();">
+                    </div>
+
+                    <!-- Quick Sample Buttons -->
+                    <div style="text-align: center; margin-top: 20px;">
+                        <span style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 10px;">Or test immediately with built-in sample scans:</span>
+                        <div class="sample-buttons">
+                            <button type="submit" name="sample_name" value="glioma" class="btn-sample">🧠 Test Glioma Scan</button>
+                            <button type="submit" name="sample_name" value="meningioma" class="btn-sample">🧠 Test Meningioma Scan</button>
+                            <button type="submit" name="sample_name" value="pituitary" class="btn-sample">🧠 Test Pituitary Scan</button>
+                            <button type="submit" name="sample_name" value="notumor" class="btn-sample">✅ Test No-Tumor Scan</button>
+                        </div>
+                    </div>
+                </form>
+            </div>
+
+            <!-- Result Display -->
+            {% if result %}
+            <div class="result-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
+                    <div>
+                        <div class="status-badge {% if result.prediction == 'No Tumor' %}good{% else %}abnormal{% endif %}">
+                            {{ result.prediction | upper }} DETECTED
+                        </div>
+                        <h2 style="font-family: var(--font-heading); font-size: 28px; margin-bottom: 6px;">
+                            Diagnosis: {{ result.prediction }}
+                        </h2>
+                        <p style="color: var(--text-secondary); font-size: 15px;">Model Confidence: <strong>{{ result.confidence }}%</strong></p>
+                    </div>
+
+                    <!-- Download PDF Form -->
+                    <form action="/download_brain_tumor_report" method="POST">
+                        <input type="hidden" name="prediction" value="{{ result.prediction }}">
+                        <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                        <input type="hidden" name="findings" value="{{ result.findings }}">
+                        <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
+                        <button type="submit" class="btn-primary" style="width: auto; padding: 10px 20px;">
+                            📄 Download PDF Report
+                        </button>
+                    </form>
+                </div>
+
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 30px;">
+                    <!-- MRI Preview Image -->
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color);">
+                        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600;">ANALYZED MRI SCAN</div>
+                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="MRI Image" style="max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: contain;">
+                    </div>
+
+                    <!-- Probability Distribution Breakdown -->
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
+                        <h4 style="font-family: var(--font-heading); margin-bottom: 16px; font-size: 16px;">Class Probability Breakdown</h4>
+                        {% for class_name, prob in result.probabilities.items() %}
+                        <div style="margin-bottom: 14px;">
+                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px;">
+                                <span style="color: var(--text-primary); font-weight: 500;">{{ class_name }}</span>
+                                <span style="color: var(--text-secondary); font-weight: 600;">{{ prob }}%</span>
+                            </div>
+                            <div class="progress-bar-container">
+                                <div class="progress-bar-fill" style="width: {{ prob }}%; {% if class_name == result.prediction %}background: var(--mri-gradient);{% endif %}"></div>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
+
+                <!-- Radiological Findings & Next Steps -->
+                <div style="grid-column: 1 / -1; margin-top: 24px; background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
+                    <h4 style="color: #a5b4fc; margin-bottom: 8px; font-size: 16px;">📋 Radiological Findings</h4>
+                    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 16px; line-height: 1.6;">{{ result.findings }}</p>
+                    
+                    <h4 style="color: #a5b4fc; margin-bottom: 8px; font-size: 16px;">💡 Recommended Follow-up</h4>
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6;">{{ result.recommendation }}</p>
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <footer>
+            <p>&copy; 2026 Unified AI Analysis Engine. Research prototype - clinical confirmation required.</p>
+        </footer>
+    </div>
+</body>
+</html>
