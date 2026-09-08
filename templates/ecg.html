@@ -126,7 +126,13 @@
                 <!-- ============================== -->
                 <!-- 2. QCNN PREDICTION SUMMARY     -->
                 <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 QCNN Prediction Summary</h2>
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 {% if result.beat_distribution %}Beat Classification Summary{% else %}QCNN Prediction Summary{% endif %}</h2>
+
+                {% if result.classifier %}
+                <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
+                    &#8505;&#65039; <strong>Classifier:</strong> {{ result.classifier }}{% if result.beats_analyzed %} &mdash; {{ result.beats_analyzed }} beats analysed{% endif %}
+                </div>
+                {% endif %}
 
                 <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
                     <div class="metric-box">
@@ -146,6 +152,23 @@
                         <div class="metric-value" style="font-size: 14px; color: var(--success);">{{ result.signal_quality }}</div>
                     </div>
                 </div>
+
+                {% if result.beat_distribution %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📈 AAMI Beat Class Distribution</h2>
+
+                <div style="margin-bottom: 28px;">
+                    {% for beat_name, prob in result.beat_distribution.items() %}
+                    <div style="margin-bottom: 10px;">
+                        <div style="font-size: 14px; color: var(--text-secondary); margin-bottom: 4px;">
+                            {{ beat_name }} — {{ prob }}%
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: {{ prob }}%;"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
 
                 <!-- ============================== -->
                 <!-- 3. ECG WAVEFORM PARAMETERS     -->

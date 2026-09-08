@@ -42,6 +42,8 @@ except Exception as e:
     print("TensorFlow import warning:", e)
     TF_AVAILABLE = False
 
+from mlkit.registry import RegistryError, load_card, validate_card
+
 # Optional DICOM support
 try:
     import pydicom
@@ -177,15 +179,28 @@ MODEL_FOLDER = "model"
 QCNN_WEIGHTS_FILE = os.path.join(MODEL_FOLDER, "mitbih_qcnn_final_weights.npy")
 QCNN_PREPROCESSING_FILE = os.path.join(MODEL_FOLDER, "mitbih_qcnn_final_preprocessing.pkl")
 
-BRAIN_TUMOR_MODEL_FILE = os.path.join(MODEL_FOLDER, "vgg16_best.keras")
-BRAIN_TUMOR_ALT_MODEL_FILE = os.path.join(MODEL_FOLDER, "brain_tumor_cnn.keras")
+# Every model below is loaded through mlkit.registry, which refuses any
+# checkpoint whose sidecar card does not match the task, class order, input
+# shape and preprocessing the caller expects. Two defects that shipped here
+# before the registry existed -- a vgg16 model fed /255 inputs, and a
+# brain-tumor model serving land cover -- become refused loads rather than
+# confident nonsense.
+MRI_MODEL_CANDIDATES = [
+    (os.path.join(MODEL_FOLDER, "mri_vgg16.keras"), [224, 224, 3], "vgg16_preprocess_input"),
+    (os.path.join(MODEL_FOLDER, "mri_cnn.keras"), [128, 128, 3], "rescale_255"),
+]
+MRI_CARD_CLASSES = ["glioma", "meningioma", "notumor", "pituitary"]
 
-# NOTE: model/efficientnet_best.keras is NOT a satellite model -- train_efficientnet.py
-# trains it on dataset/Training, the brain-tumor MRI set (glioma / meningioma / notumor /
-# pituitary). Using it here returned class 0 at ~99.8% for every scene, which was then
-# relabelled "Forest / Vegetation". Land cover classification therefore uses the spectral
-# analysis below until a genuine satellite model is placed at this path.
 SATELLITE_MODEL_FILE = os.path.join(MODEL_FOLDER, "satellite_best.keras")
+SATELLITE_CARD_CLASSES = [
+    "AnnualCrop", "Forest", "HerbaceousVegetation", "Highway", "Industrial",
+    "Pasture", "PermanentCrop", "Residential", "River", "SeaLake",
+]
+SATELLITE_INPUT_SHAPE = [64, 64, 3]
+
+ECG_MODEL_FILE = os.path.join(MODEL_FOLDER, "ecg_cnn.keras")
+ECG_CARD_CLASSES = ["N", "S", "V", "F", "Q"]
+ECG_INPUT_SHAPE = [280, 1]
 
 
 # ============================================================
@@ -250,55 +265,84 @@ except Exception as e:
 
 _brain_tumor_model = None
 _satellite_model = None
+_ecg_model = None
 
-def preprocess_mri(img_array):
-    """Prepare a 224x224 RGB array for the brain tumor model.
 
-    train_vgg16.py trained with keras' vgg16 preprocess_input (ImageNet BGR +
-    mean subtraction). Feeding /255 inputs instead collapses every prediction
-    to "No Tumor", so inference must use the same transform as training.
+def _load_validated(path, task, classes, input_shape, preprocessing):
+    """Load a model only if its card matches what the caller expects.
+
+    Returns (model, card) on success and (None, None) otherwise, printing the
+    reason. A mismatch is never silently tolerated: a model whose card does
+    not match is the exact failure the registry exists to catch.
+    """
+    if not TF_AVAILABLE or not os.path.exists(path):
+        return None, None
+    try:
+        card = load_card(path)
+        validate_card(card, task, classes, input_shape, preprocessing)
+        model = load_model(path, compile=False)
+    except RegistryError as e:
+        print(f"Refusing to load {path}: {e}")
+        return None, None
+    except Exception as e:
+        print(f"Failed to load {path}: {e}")
+        return None, None
+    units = model.output_shape[-1]
+    if units != len(classes):
+        print(f"Refusing to load {path}: outputs {units} classes, card declares {len(classes)}.")
+        return None, None
+    print(f"Loaded {path} ({task}, {units} classes, {preprocessing})")
+    return model, card
+
+
+def preprocess_mri(img_array, preprocessing="vgg16_preprocess_input"):
+    """Prepare an RGB array for the brain tumor model it was trained for.
+
+    The transform is read from the model card, never assumed: the vgg16
+    transfer model needs ImageNet BGR mean subtraction, while the scratch CNN
+    is trained on /255 inputs. Feeding one the other collapses every
+    prediction to a single class.
     """
     batch = np.expand_dims(np.asarray(img_array, dtype=np.float32), axis=0)
-    if TF_AVAILABLE:
+    if preprocessing == "vgg16_preprocess_input" and TF_AVAILABLE:
         return vgg16_preprocess(batch.copy())
     return batch / 255.0
 
 
 def get_brain_tumor_model():
+    """Return (model, card) for the best available validated MRI model."""
     global _brain_tumor_model
-    if _brain_tumor_model is None and TF_AVAILABLE:
-        for path in [BRAIN_TUMOR_MODEL_FILE, BRAIN_TUMOR_ALT_MODEL_FILE]:
-            if os.path.exists(path):
-                try:
-                    _brain_tumor_model = load_model(path, compile=False)
-                    print(f"Brain tumor model loaded lazily from {path}")
-                    break
-                except Exception as e:
-                    print(f"Failed to load brain tumor model from {path}: {e}")
+    if _brain_tumor_model is None:
+        _brain_tumor_model = (None, None)
+        for path, shape, prep in MRI_MODEL_CANDIDATES:
+            model, card = _load_validated(path, "mri", MRI_CARD_CLASSES, shape, prep)
+            if model is not None:
+                _brain_tumor_model = (model, card)
+                break
     return _brain_tumor_model
 
-def get_satellite_model():
-    """Load a purpose-trained satellite model, if one has been provided.
 
-    Returns None when no such model exists, in which case predict_satellite()
-    falls back to spectral analysis. A model trained on a different task must
-    never be used here: its class indices carry unrelated meaning.
+def get_satellite_model():
+    """Return (model, card) for the EuroSAT land cover model, if installed.
+
+    Returns (None, None) when no validated model exists, in which case
+    predict_satellite() falls back to spectral analysis.
     """
     global _satellite_model
-    if _satellite_model is None and TF_AVAILABLE and os.path.exists(SATELLITE_MODEL_FILE):
-        try:
-            _satellite_model = load_model(SATELLITE_MODEL_FILE, compile=False)
-            units = _satellite_model.output_shape[-1]
-            if units != len(SATELLITE_CLASSES):
-                print(f"Ignoring {SATELLITE_MODEL_FILE}: it outputs {units} classes but "
-                      f"{len(SATELLITE_CLASSES)} land cover classes are expected.")
-                _satellite_model = False
-            else:
-                print(f"Satellite model loaded lazily from {SATELLITE_MODEL_FILE}")
-        except Exception as e:
-            print(f"Failed to load satellite model from {SATELLITE_MODEL_FILE}: {e}")
-            _satellite_model = False
-    return _satellite_model or None
+    if _satellite_model is None:
+        _satellite_model = _load_validated(
+            SATELLITE_MODEL_FILE, "satellite", SATELLITE_CARD_CLASSES,
+            SATELLITE_INPUT_SHAPE, "rescale_255")
+    return _satellite_model
+
+
+def get_ecg_model():
+    """Return (model, card) for the AAMI 5-class beat classifier, if installed."""
+    global _ecg_model
+    if _ecg_model is None:
+        _ecg_model = _load_validated(
+            ECG_MODEL_FILE, "ecg", ECG_CARD_CLASSES, ECG_INPUT_SHAPE, "beat_zscore")
+    return _ecg_model
 
 
 # ============================================================
@@ -394,7 +438,74 @@ def apply_saved_preprocessing(X):
     return ((X_reduced - X_min) / denom) * np.pi
 
 
+ECG_BEAT_NAMES = {
+    "N": "Normal beat",
+    "S": "Supraventricular ectopic beat",
+    "V": "Ventricular ectopic beat",
+    "F": "Fusion beat",
+    "Q": "Unclassifiable beat",
+}
+
+
+def predict_ecg_cnn(X):
+    """Classify each 280-sample beat with the AAMI 5-class 1D CNN.
+
+    Returns None when no validated model is installed, so predict_ecg() can
+    fall back to the QCNN path.
+    """
+    model, card = get_ecg_model()
+    if model is None:
+        return None
+
+    beats = np.asarray(X, dtype=np.float32).reshape(-1, 280)
+    # beat_zscore: each beat is standardised on its own, exactly as in training.
+    mean = beats.mean(axis=1, keepdims=True)
+    std = beats.std(axis=1, keepdims=True)
+    std[std == 0] = 1.0
+    beats = (beats - mean) / std
+
+    preds = model.predict(beats[..., np.newaxis], verbose=0)
+    classes = card["classes"]
+    per_beat = preds.argmax(axis=1)
+    mean_probs = preds.mean(axis=0)
+
+    counts = {c: int((per_beat == i).sum()) for i, c in enumerate(classes)}
+    total = len(per_beat) or 1
+    abnormal = total - counts.get("N", 0)
+    abnormal_fraction = abnormal / total
+
+    # A strip is called abnormal when any non-normal beat class dominates the
+    # averaged distribution, or when abnormal beats are not merely incidental.
+    top_idx = int(np.argmax(mean_probs))
+    top_class = classes[top_idx]
+    if top_class == "N" and abnormal_fraction < 0.10:
+        prediction, abnormal_type = "NORMAL", "No ectopic beats detected"
+        confidence = float(mean_probs[classes.index("N")]) * 100.0
+    else:
+        worst = max((c for c in classes if c != "N"), key=lambda c: counts[c])
+        prediction = "ABNORMAL"
+        abnormal_type = ECG_BEAT_NAMES[worst]
+        confidence = max(abnormal_fraction, float(mean_probs[classes.index(worst)])) * 100.0
+
+    return {
+        "prediction": prediction,
+        "abnormal_type": abnormal_type,
+        "confidence": f"{confidence:.2f}",
+        "atrial_probability": f"{float(mean_probs[classes.index('S')]) * 100:.2f}",
+        "beat_predictions": preds.max(axis=1),
+        "beat_counts": counts,
+        "beat_distribution": {ECG_BEAT_NAMES[c]: f"{float(mean_probs[i]) * 100:.2f}"
+                              for i, c in enumerate(classes)},
+        "beats_analyzed": total,
+        "method": "AAMI 5-class 1D CNN (MIT-BIH, inter-patient split)",
+    }
+
+
 def predict_ecg(X):
+    cnn_result = predict_ecg_cnn(X)
+    if cnn_result is not None:
+        return cnn_result
+
     if qcnn_weights is None:
         # Fallback heuristic prediction if weights file missing
         std_val = float(np.std(X))
@@ -898,13 +1009,15 @@ def calculate_spread(area):
 
 def predict_brain_tumor(image_path):
     img = load_image_rgb(image_path)
-    img_resized = img.resize((224, 224))
-    img_array = np.array(img_resized, dtype=np.float32)
+    model, card = get_brain_tumor_model()
+    # Resize to whatever the card declares -- 224 for vgg16, 128 for the
+    # scratch CNN. The Grad-CAM path below reuses this same array.
+    size = tuple(card["input_shape"][:2]) if card else (224, 224)
+    img_array = np.array(img.resize(size), dtype=np.float32)
 
-    model = get_brain_tumor_model()
     if model is not None:
         try:
-            input_tensor = preprocess_mri(img_array)
+            input_tensor = preprocess_mri(img_array, card["preprocessing"])
             preds = model.predict(input_tensor)[0]
             top_idx = int(np.argmax(preds))
             confidence = float(preds[top_idx]) * 100.0
@@ -982,12 +1095,29 @@ def fallback_mri_analysis(img_array):
 # SATELLITE IMAGE ANALYSIS LOGIC
 # ============================================================
 
+# The four display groups the UI and PDF reports are built around.
 SATELLITE_CLASSES = {
     0: "Forest / Vegetation",
     1: "Urban / Built-up",
     2: "Water Body",
     3: "Agricultural / Barren Land"
 }
+
+# EuroSAT's 10 land cover classes collapsed onto those groups. The card's
+# class order is authoritative; this maps by name, never by index.
+SATELLITE_GROUPS = {
+    "AnnualCrop": "Agricultural / Barren Land",
+    "Forest": "Forest / Vegetation",
+    "HerbaceousVegetation": "Forest / Vegetation",
+    "Highway": "Urban / Built-up",
+    "Industrial": "Urban / Built-up",
+    "Pasture": "Agricultural / Barren Land",
+    "PermanentCrop": "Agricultural / Barren Land",
+    "Residential": "Urban / Built-up",
+    "River": "Water Body",
+    "SeaLake": "Water Body",
+}
+SATELLITE_GROUP_INDEX = {name: i for i, name in SATELLITE_CLASSES.items()}
 
 
 def predict_satellite(image_path):
@@ -1007,17 +1137,20 @@ def predict_satellite(image_path):
     g_mean = float(np.mean(g))
     b_mean = float(np.mean(b))
 
-    model = get_satellite_model()
+    model, card = get_satellite_model()
+    fine_probs = None
     if model is not None:
         try:
-            input_tensor = np.expand_dims(img_array / 255.0, axis=0)
-            preds = model.predict(input_tensor)[0]
-            top_idx = int(np.argmax(preds))
-            confidence = float(preds[top_idx]) * 100.0
-            probs = {SATELLITE_CLASSES[i]: float(preds[i]) * 100.0 for i in range(len(preds))}
+            size = tuple(card["input_shape"][:2])
+            scene = np.array(img.resize(size), dtype=np.float32)
+            preds = model.predict(np.expand_dims(scene / 255.0, axis=0))[0]
+            classes = card["classes"]
+            fine_probs = {classes[i]: float(preds[i]) * 100.0 for i in range(len(preds))}
+            top_idx, confidence, probs = group_eurosat_probs(fine_probs)
         except Exception as e:
             print("Satellite model error, using spectral analysis fallback:", e)
             top_idx, confidence, probs = spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi)
+            fine_probs = None
     else:
         top_idx, confidence, probs = spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi)
 
@@ -1067,11 +1200,26 @@ def predict_satellite(image_path):
         "environmental_health": env_score,
         "probabilities": {k: f"{v:.2f}" for k, v in probs.items()},
         "land_breakdown": {k: f"{v:.1f}%" for k, v in shares.items()},
-        "method": ("EfficientNet land cover classifier" if model is not None
+        "eurosat_probabilities": ({k: f"{v:.2f}" for k, v in fine_probs.items()}
+                                  if fine_probs else None),
+        "method": ("EuroSAT 10-class CNN land cover classifier" if fine_probs
                    else "Spectral RGB / pseudo-NDVI analysis (no trained satellite model installed)"),
         "findings": f"Primary terrain classified as {top_class} with spectral NDVI index of {mean_ndvi:.3f}.",
         "recommendation": "Monitored for seasonal vegetation change and urban encroachment."
     }
+
+
+def group_eurosat_probs(fine_probs):
+    """Collapse EuroSAT's 10 class probabilities onto the 4 display groups.
+
+    The winning group is the one with the highest summed probability, which is
+    more stable than taking the group of the single top EuroSAT class.
+    """
+    grouped = {name: 0.0 for name in SATELLITE_CLASSES.values()}
+    for cls, pct in fine_probs.items():
+        grouped[SATELLITE_GROUPS[cls]] += pct
+    top_class = max(grouped, key=grouped.get)
+    return SATELLITE_GROUP_INDEX[top_class], grouped[top_class], grouped
 
 
 def spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi):
@@ -1189,11 +1337,14 @@ def analyze_ecg():
         plot_filename = "ecg_waveform_" + uuid.uuid4().hex[:8] + ".png"
         create_ecg_plot(ecg_values, plot_filename)
 
+        classifier = qcnn_result.get("method", "8-qubit QCNN")
         if qcnn_result["prediction"] == "NORMAL":
-            interpretation = "The QCNN classified the ECG as NORMAL (No atrial abnormality detected)."
+            interpretation = (f"The {classifier} classified the ECG as NORMAL "
+                              f"({qcnn_result['abnormal_type']}).")
             recommendation = "Normal rhythm detected. Routine clinical monitoring recommended."
         else:
-            interpretation = "The QCNN classified the ECG as ABNORMAL (Atrial Abnormality detected)."
+            interpretation = (f"The {classifier} classified the ECG as ABNORMAL "
+                              f"({qcnn_result['abnormal_type']}).")
             recommendation = "Abnormal pattern identified. Clinical evaluation by a cardiologist is advised."
 
         result = {
@@ -1201,6 +1352,10 @@ def analyze_ecg():
             "abnormal_type": qcnn_result["abnormal_type"],
             "confidence": qcnn_result["confidence"],
             "atrial_probability": qcnn_result["atrial_probability"],
+            "classifier": classifier,
+            "beat_distribution": qcnn_result.get("beat_distribution"),
+            "beat_counts": qcnn_result.get("beat_counts"),
+            "beats_analyzed": qcnn_result.get("beats_analyzed"),
             "heart_rate": parameters["heart_rate"],
             "rr_interval": parameters["rr_interval"],
             "qrs_duration": parameters["qrs_duration"],
@@ -1285,12 +1440,12 @@ def analyze_brain_tumor():
 
         if res["prediction"] != "No Tumor":
             try:
-                model = get_brain_tumor_model()
+                model, card = get_brain_tumor_model()
                 if model is not None:
-                    # Prepare image for model
-                    img_resized = img.resize((224, 224))
-                    img_array = np.array(img_resized, dtype=np.float32)
-                    input_tensor = preprocess_mri(img_array)
+                    # Prepare image exactly as the card specifies
+                    size = tuple(card["input_shape"][:2])
+                    img_array = np.array(img.resize(size), dtype=np.float32)
+                    input_tensor = preprocess_mri(img_array, card["preprocessing"])
                     
                     # Get predicted class index
                     predicted_class = list(MRI_CLASSES.values()).index(res["prediction"])

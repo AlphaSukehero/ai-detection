@@ -149,6 +149,23 @@
                     {% endfor %}
                 </div>
 
+                {% if result.eurosat_probabilities %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🛰️ EuroSAT Class Detail</h2>
+
+                <div style="margin-bottom: 28px;">
+                    {% for class_name, prob in result.eurosat_probabilities.items() %}
+                    <div style="margin-bottom: 10px;">
+                        <div style="font-size: 14px; color: var(--text-secondary); margin-bottom: 4px;">
+                            {{ class_name }} — {{ prob }}%
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: {{ prob }}%;"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+                {% endif %}
+
                 <!-- ============================== -->
                 <!-- 4. SATELLITE IMAGE + LAND COVER-->
                 <!-- ============================== -->
