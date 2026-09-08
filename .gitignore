@@ -39,3 +39,7 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
+
+# Prepared datasets (reproducible from scripts/prepare_*.py)
+data/raw/
+data/processed/
