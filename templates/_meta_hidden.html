@@ -1,0 +1,6 @@
+{# Carries metadata through to the PDF download POST. #}
+{% for key, label in meta_fields %}
+<input type="hidden" name="{{ key }}" value="{{ meta.get(key, '') }}">
+{% endfor %}
+<input type="hidden" name="report_id" value="{{ meta.report_id }}">
+<input type="hidden" name="generated_at" value="{{ meta.generated_at }}">

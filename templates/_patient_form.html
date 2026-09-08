@@ -1,0 +1,69 @@
+{# Patient metadata block shared by the ECG and MRI analysis pages. #}
+<div class="meta-form">
+    <div class="meta-form-header">
+        <h3>👤 Patient Details</h3>
+    </div>
+    <p class="meta-form-note">
+        These details identify the study and are printed on the PDF report. Nothing is
+        stored on the server — the values travel with this session only.
+    </p>
+
+    <div class="field-grid">
+        <div class="field">
+            <label for="patient_name">Patient Name</label>
+            <input type="text" id="patient_name" name="patient_name" maxlength="200"
+                   autocomplete="off" placeholder="Full name"
+                   value="{{ patient.get('patient_name', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="patient_id">Patient ID / MRN</label>
+            <input type="text" id="patient_id" name="patient_id" maxlength="200"
+                   autocomplete="off" placeholder="e.g. MRN-8821"
+                   value="{{ patient.get('patient_id', '') }}">
+            <div class="field-hint">Used to name the downloaded report file.</div>
+        </div>
+
+        <div class="field">
+            <label for="age">Age</label>
+            <input type="number" id="age" name="age" min="0" max="130" step="1"
+                   placeholder="Years" value="{{ patient.get('age', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="gender">Gender</label>
+            <select id="gender" name="gender">
+                <option value="">Select…</option>
+                {% for option in gender_options %}
+                <option value="{{ option }}" {% if patient.get('gender') == option %}selected{% endif %}>{{ option }}</option>
+                {% endfor %}
+            </select>
+        </div>
+
+        <div class="field">
+            <label for="contact">Contact Number</label>
+            <input type="tel" id="contact" name="contact" maxlength="200"
+                   autocomplete="off" placeholder="Phone or extension"
+                   value="{{ patient.get('contact', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="referring_physician">Referring Physician</label>
+            <input type="text" id="referring_physician" name="referring_physician" maxlength="200"
+                   autocomplete="off" placeholder="e.g. Dr. A. Mehta"
+                   value="{{ patient.get('referring_physician', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="study_date">Study Date</label>
+            <input type="date" id="study_date" name="study_date"
+                   value="{{ patient.get('study_date', '') }}">
+        </div>
+
+        <div class="field field-full">
+            <label for="clinical_history">Clinical History / Indication</label>
+            <textarea id="clinical_history" name="clinical_history" maxlength="1000"
+                      placeholder="Presenting symptoms, relevant history, reason for the study…">{{ patient.get('clinical_history', '') }}</textarea>
+        </div>
+    </div>
+</div>

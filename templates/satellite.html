@@ -29,10 +29,10 @@
             <!-- Upload Panel -->
             <div class="panel">
                 <div class="panel-title">
-                    <span>🛰️</span> Upload Satellite Imagery
+                    <span>🛰️</span> Survey Details & Satellite Imagery
                 </div>
                 <div class="panel-subtitle">
-                    Upload multi-spectral satellite imagery or land cover photography (.jpg, .png, .tif / GeoTIFF) for AI-based terrain classification, vegetation index estimation (NDVI), and environmental health metrics.
+                    Record the survey details, then upload multi-spectral satellite imagery or land cover photography (.jpg, .png, .tif / GeoTIFF) for AI-based terrain classification, vegetation index estimation (NDVI), and environmental health metrics.
                 </div>
 
                 {% if error %}
@@ -42,60 +42,84 @@
                 {% endif %}
 
                 <form action="/analyze_satellite" method="POST" enctype="multipart/form-data" id="sat-form">
+                    {% include "_survey_form.html" %}
+
+                    <h3 style="font-family: var(--font-heading); font-size: 16px; margin: 28px 0 14px; color: var(--text-primary);">
+                        🌍 Scene Image
+                    </h3>
+
                     <div class="upload-dropzone" onclick="document.getElementById('satellite_file').click();">
                         <div class="upload-icon">🌍</div>
-                        <h3 style="margin-bottom: 6px; font-weight: 600;">Drag & Drop Satellite Image here or click to browse</h3>
+                        <h3 style="margin-bottom: 6px; font-weight: 600;" id="upload-label">Drag &amp; Drop Satellite Image here or click to browse</h3>
                         <p style="color: var(--text-muted); font-size: 13px;">Supports GeoTIFF / JPG / PNG / WEBP images up to 32 MB</p>
-                        <input type="file" name="satellite_file" id="satellite_file" class="file-input" accept="image/*,.tif,.tiff" onchange="document.getElementById('sat-form').submit();">
+                        <input type="file" name="satellite_file" id="satellite_file" class="file-input" accept="image/*,.tif,.tiff" onchange="document.getElementById('upload-label').innerText = 'Selected: ' + this.files[0].name;">
                     </div>
+
+                    <button type="submit" class="btn-primary" style="width: 100%; margin-top: 16px; background: var(--sat-gradient);">
+                        🚀 Analyze Satellite Image &rarr;
+                    </button>
 
                     <!-- Quick Sample Buttons -->
                     <div style="text-align: center; margin-top: 20px;">
                         <span style="font-size: 13px; color: var(--text-muted); display: block; margin-bottom: 10px;">Or test immediately with built-in satellite samples:</span>
                         <div class="sample-buttons">
-                            <button type="submit" name="sample_name" value="glioma" class="btn-sample">🌲 Forest / Vegetation Sample</button>
-                            <button type="submit" name="sample_name" value="meningioma" class="btn-sample">🏙️ Urban / Built-up Sample</button>
-                            <button type="submit" name="sample_name" value="notumor" class="btn-sample">🌊 Water Body Sample</button>
+                            <button type="submit" name="sample_name" value="forest" class="btn-sample">🌲 Forest / Vegetation Sample</button>
+                            <button type="submit" name="sample_name" value="urban" class="btn-sample">🏙️ Urban / Built-up Sample</button>
+                            <button type="submit" name="sample_name" value="water" class="btn-sample">🌊 Water Body Sample</button>
                         </div>
                     </div>
                 </form>
             </div>
 
-            <!-- Result Display -->
+            <!-- ============================================================ -->
+            <!-- RESULT DISPLAY (matches reference Streamlit output style) -->
+            <!-- ============================================================ -->
             {% if result %}
             <div class="result-card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
-                    <div>
-                        <div class="status-badge good">
-                            CLASSIFIED: {{ result.prediction | upper }}
-                        </div>
-                        <h2 style="font-family: var(--font-heading); font-size: 28px; margin-bottom: 6px;">
-                            Terrain Type: {{ result.prediction }}
-                        </h2>
-                        <p style="color: var(--text-secondary); font-size: 15px;">Model Confidence: <strong>{{ result.confidence }}%</strong></p>
-                    </div>
 
-                    <!-- Download PDF Form -->
-                    <form action="/download_satellite_report" method="POST">
-                        <input type="hidden" name="prediction" value="{{ result.prediction }}">
-                        <input type="hidden" name="confidence" value="{{ result.confidence }}">
-                        <input type="hidden" name="ndvi" value="{{ result.ndvi }}">
-                        <input type="hidden" name="health" value="{{ result.environmental_health }}">
-                        <button type="submit" class="btn-primary" style="width: auto; padding: 10px 20px;">
-                            📄 Download PDF Report
-                        </button>
-                    </form>
+                {% if result.method %}
+                <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 24px; color: #60a5fa; font-size: 14px;">
+                    ℹ️ <strong>Classification method:</strong> {{ result.method }}
+                </div>
+                {% endif %}
+
+                {% if survey %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🗂️ Survey Details</h2>
+                {% with meta = survey, meta_rows = survey_rows %}
+                    {% include "_meta_summary.html" %}
+                {% endwith %}
+                {% endif %}
+
+
+                <!-- ============================== -->
+                <!-- 1. PREDICTION RESULT           -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🛰️ Prediction Result</h2>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Terrain Type</div>
+                        <div class="metric-value" style="color: #60a5fa;">{{ result.prediction }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Model Confidence</div>
+                        <div class="metric-value" style="color: var(--success);">{{ result.confidence }}%</div>
+                    </div>
                 </div>
 
-                <!-- Key Remote Sensing Metrics -->
-                <div class="grid-metrics">
+                <!-- ============================== -->
+                <!-- 2. KEY REMOTE SENSING METRICS  -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📊 Remote Sensing Metrics</h2>
+
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
                     <div class="metric-box">
                         <div class="metric-label">Estimated NDVI</div>
                         <div class="metric-value" style="color: var(--success);">{{ result.ndvi }}</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Environmental Health</div>
-                        <div class="metric-value" style="color: #60a5fa;">{{ result.environmental_health }}</div>
+                        <div class="metric-value" style="font-size: 14px; color: #60a5fa;">{{ result.environmental_health }}</div>
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">Primary Class</div>
@@ -107,16 +131,37 @@
                     </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 24px;">
-                    <!-- Image Preview -->
+                <!-- ============================== -->
+                <!-- 3. CLASS PROBABILITIES         -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📈 Class Probabilities</h2>
+
+                <div style="margin-bottom: 28px;">
+                    {% for class_name, prob in result.probabilities.items() %}
+                    <div style="margin-bottom: 14px;">
+                        <div style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
+                            {{ class_name }} — {{ prob }}%
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: {{ prob }}%; {% if class_name == result.prediction %}background: var(--sat-gradient);{% endif %}"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- ============================== -->
+                <!-- 4. SATELLITE IMAGE + LAND COVER-->
+                <!-- ============================== -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 28px;">
+                    <!-- Processed Satellite Image -->
                     <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color);">
                         <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600;">PROCESSED SATELLITE IMAGE</div>
-                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="Satellite Image" style="max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: contain;">
+                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="Satellite Image" style="max-width: 100%; max-height: 300px; border-radius: 10px; object-fit: contain;">
                     </div>
 
                     <!-- Land Cover Distribution -->
                     <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
-                        <h4 style="font-family: var(--font-heading); margin-bottom: 16px; font-size: 16px;">Land Cover Coverage Estimate</h4>
+                        <h4 style="font-family: var(--font-heading); margin-bottom: 16px; font-size: 16px;">🌍 Land Cover Coverage Estimate</h4>
                         {% for cover_type, percentage in result.land_breakdown.items() %}
                         <div style="margin-bottom: 14px;">
                             <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px;">
@@ -131,16 +176,65 @@
                     </div>
                 </div>
 
-                <!-- Analysis Summary -->
-                <div style="grid-column: 1 / -1; margin-top: 24px; background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
-                    <h4 style="color: #60a5fa; margin-bottom: 8px; font-size: 16px;">🌐 Terrain Analysis Summary</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 14px; line-height: 1.6;">{{ result.findings }}</p>
-                    
-                    <h4 style="color: #60a5fa; margin-bottom: 8px; font-size: 16px;">🌱 Recommended Environmental Monitoring</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6;">{{ result.recommendation }}</p>
+                <!-- ============================== -->
+                <!-- 5. TERRAIN ANALYSIS SUMMARY    -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🌐 Terrain Analysis Summary</h2>
+
+                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 24px;">
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.findings }}</p>
                 </div>
+
+                <!-- ============================== -->
+                <!-- 6. RECOMMENDATIONS             -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🌱 Recommended Environmental Monitoring</h2>
+
+                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 28px;">
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.recommendation }}</p>
+                </div>
+
+                <!-- ============================== -->
+                <!-- 7. PATIENT REPORT / PDF        -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📄 Analysis Report</h2>
+
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 16px; color: var(--success); font-size: 14px;">
+                    ✅ Complete report generated successfully.
+                </div>
+
+                <form action="/download_satellite_report" method="POST">
+                    {% with meta = survey, meta_fields = survey_fields %}
+                        {% include "_meta_hidden.html" %}
+                    {% endwith %}
+                    <input type="hidden" name="prediction" value="{{ result.prediction }}">
+                    <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                    <input type="hidden" name="ndvi" value="{{ result.ndvi }}">
+                    <input type="hidden" name="health" value="{{ result.environmental_health }}">
+                    <input type="hidden" name="veg_pct" value="{{ result.land_breakdown['Vegetation'] }}">
+                    <input type="hidden" name="urban_pct" value="{{ result.land_breakdown['Urban'] }}">
+                    <input type="hidden" name="water_pct" value="{{ result.land_breakdown['Water'] }}">
+                    <input type="hidden" name="barren_pct" value="{{ result.land_breakdown['Barren'] }}">
+                    <input type="hidden" name="method" value="{{ result.method }}">
+                    <input type="hidden" name="findings" value="{{ result.findings }}">
+                    <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
+                    <button type="submit" class="btn-primary" style="width: 100%; padding: 14px 24px; background: var(--sat-gradient); box-shadow: 0 4px 15px rgba(59, 130, 246, 0.3);">
+                        📥 Download Complete Analysis Report (PDF)
+                    </button>
+                </form>
+
             </div>
             {% endif %}
+
+            <!-- ============================== -->
+            <!-- 8. DISCLAIMER                  -->
+            <!-- ============================== -->
+            <div style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 10px;">
+                <p style="color: var(--text-muted); font-size: 13px; line-height: 1.7;">
+                    ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. The EfficientNet provides a terrain classification prediction and spectral analysis.<br>
+                    The NDVI index, land cover breakdown, environmental health score and terrain analysis are model-derived estimates and are not validated remote sensing measurements.
+                </p>
+            </div>
         </div>
 
         <footer>

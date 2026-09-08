@@ -32,7 +32,7 @@
                     <span>❤️</span> Patient & ECG Data Input
                 </div>
                 <div class="panel-subtitle">
-                    Enter patient metadata and upload single or multi-lead ECG recordings (.csv, .txt) <strong>or an ECG strip image (.jpg, .png)</strong> for Convolutional Neural Network (8-Qubit QCNN) analysis.
+                    Enter the patient details, then upload single or multi-lead ECG recordings (.csv, .txt) <strong>or an ECG strip image (.jpg, .png)</strong> for Convolutional Neural Network (8-Qubit QCNN) analysis.
                 </div>
 
                 {% if error %}
@@ -42,42 +42,10 @@
                 {% endif %}
 
                 <form action="/analyze_ecg" method="POST" enctype="multipart/form-data" id="ecg-form">
-                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 28px;">
+                    <div style="display: grid; gap: 28px;">
                         
-                        <!-- Patient Details Column -->
-                        <div style="background: rgba(15, 23, 42, 0.5); padding: 24px; border-radius: 18px; border: 1px solid var(--border-color);">
-                            <h3 style="font-family: var(--font-heading); font-size: 16px; margin-bottom: 16px; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
-                                👤 Patient Metadata
-                            </h3>
-                            
-                            <div style="display: flex; flex-direction: column; gap: 14px;">
-                                <div>
-                                    <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500;">Patient Name</label>
-                                    <input type="text" name="patient_name" placeholder="e.g. John Doe" style="width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: white; font-size: 14px;">
-                                </div>
-                                
-                                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
-                                    <div>
-                                        <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500;">Patient ID</label>
-                                        <input type="text" name="patient_id" placeholder="e.g. PT-8821" style="width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: white; font-size: 14px;">
-                                    </div>
-                                    <div>
-                                        <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500;">Age</label>
-                                        <input type="number" name="age" placeholder="Age" style="width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(255,255,255,0.05); color: white; font-size: 14px;">
-                                    </div>
-                                </div>
-
-                                <div>
-                                    <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500;">Gender</label>
-                                    <select name="gender" style="width: 100%; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border-color); background: rgba(15,23,42,0.9); color: white; font-size: 14px;">
-                                        <option value="">Select Gender</option>
-                                        <option value="Male">Male</option>
-                                        <option value="Female">Female</option>
-                                        <option value="Other">Other</option>
-                                    </select>
-                                </div>
-                            </div>
-                        </div>
+                        <!-- Patient Details -->
+                        {% include "_patient_form.html" %}
 
                         <!-- ECG File Upload Column -->
                         <div style="display: flex; flex-direction: column;">
@@ -89,7 +57,7 @@
                                 <div class="upload-icon" style="color: #f43f5e;">♡</div>
                                 <h3 style="margin-bottom: 6px; font-weight: 600; font-size: 15px;" id="upload-label">Drag & Drop ECG CSV / ECG image here or click to browse</h3>
                                 <p style="color: var(--text-muted); font-size: 12px;">Supports MIT-BIH 280-sample CSV/TXT <strong>or an ECG strip image (JPG/PNG)</strong></p>
-                                <input type="file" name="ecg_file" id="ecg_file" class="file-input" accept=".csv,.txt,.dat,.hea,image/*" onchange="document.getElementById('upload-label').innerText = 'Selected: ' + this.files[0].name; document.getElementById('ecg-form').submit();">
+                                <input type="file" name="ecg_file" id="ecg_file" class="file-input" accept=".csv,.txt,.dat,.hea,image/*" onchange="document.getElementById('upload-label').innerText = 'Selected: ' + this.files[0].name;">
                             </div>
 
                             <button type="submit" class="btn-primary" style="margin-top: 16px; background: var(--ecg-gradient); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
@@ -109,50 +77,83 @@
                 </form>
             </div>
 
-            <!-- Analysis Results Panel -->
+            <!-- ============================================================ -->
+            <!-- RESULT DISPLAY (matches reference Streamlit output style) -->
+            <!-- ============================================================ -->
             {% if result %}
             <div class="result-card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
-                    <div>
-                        <div class="status-badge {% if result.prediction == 'NORMAL' %}good{% else %}abnormal{% endif %}">
-                            {{ result.prediction }} RHYTHM DETECTED
-                        </div>
-                        <h2 style="font-family: var(--font-heading); font-size: 28px; margin-bottom: 6px;">
-                            Diagnosis: {{ result.abnormal_type }}
-                        </h2>
-                        <p style="color: var(--text-secondary); font-size: 15px;">
-                            Classifier Confidence: <strong>{{ result.confidence }}%</strong> &bull; Atrial Abnormality Prob: <strong>{{ result.atrial_probability }}%</strong>
-                        </p>
-                        {% if result.input_source %}
-                        <p style="color: var(--text-muted); font-size: 13px; margin-top: 6px;">
-                            &#128290; Input: {{ result.input_source }}
-                        </p>
-                        {% endif %}
-                    </div>
 
-                    <!-- Download PDF Form -->
-                    <form action="/download_ecg_report" method="POST">
-                        <input type="hidden" name="prediction" value="{{ result.prediction }}">
-                        <input type="hidden" name="abnormal_type" value="{{ result.abnormal_type }}">
-                        <input type="hidden" name="confidence" value="{{ result.confidence }}">
-                        <input type="hidden" name="heart_rate" value="{{ result.heart_rate }}">
-                        <input type="hidden" name="rr_interval" value="{{ result.rr_interval }}">
-                        <input type="hidden" name="qrs_duration" value="{{ result.qrs_duration }}">
-                        <input type="hidden" name="pr_interval" value="{{ result.pr_interval }}">
-                        <input type="hidden" name="qt_interval" value="{{ result.qt_interval }}">
-                        <input type="hidden" name="qtc" value="{{ result.qtc }}">
-                        <input type="hidden" name="sdnn" value="{{ result.sdnn }}">
-                        <input type="hidden" name="rmssd" value="{{ result.rmssd }}">
-                        <input type="hidden" name="interpretation" value="{{ result.interpretation }}">
-                        <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
-                        <button type="submit" class="btn-primary" style="width: auto; padding: 10px 20px; background: var(--ecg-gradient);">
-                            📄 Download Clinical PDF Report
-                        </button>
-                    </form>
+                <!-- ============================== -->
+                <!-- 1. PREDICTION RESULT           -->
+                <!-- ============================== -->
+                {% if patient %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🗂️ Study Details</h2>
+                {% with meta = patient, meta_rows = patient_rows %}
+                    {% include "_meta_summary.html" %}
+                {% endwith %}
+                {% endif %}
+
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">❤️ Prediction Result</h2>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Rhythm Classification</div>
+                        <div class="metric-value" style="color: {% if result.prediction == 'NORMAL' %}var(--success){% else %}var(--danger){% endif %};">{{ result.prediction }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Abnormality Type</div>
+                        <div class="metric-value" style="font-size: 16px;">{{ result.abnormal_type }}</div>
+                    </div>
                 </div>
 
-                <!-- 9 Quantitative ECG Parameters Grid -->
-                <div class="grid-metrics" style="grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin: 28px 0 24px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Classifier Confidence</div>
+                        <div class="metric-value" style="color: #60a5fa;">{{ result.confidence }}%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Atrial Abnormality Probability</div>
+                        <div class="metric-value" style="color: #a78bfa;">{{ result.atrial_probability }}%</div>
+                    </div>
+                </div>
+
+                {% if result.input_source %}
+                <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 24px;">
+                    &#128290; Input: {{ result.input_source }}
+                </div>
+                {% endif %}
+
+                <!-- ============================== -->
+                <!-- 2. QCNN PREDICTION SUMMARY     -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 QCNN Prediction Summary</h2>
+
+                <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin-bottom: 28px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Prediction</div>
+                        <div class="metric-value" style="font-size: 16px; color: {% if result.prediction == 'NORMAL' %}var(--success){% else %}var(--danger){% endif %};">{{ result.prediction }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Confidence</div>
+                        <div class="metric-value" style="font-size: 16px;">{{ result.confidence }}%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Atrial Prob</div>
+                        <div class="metric-value" style="font-size: 16px;">{{ result.atrial_probability }}%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Signal Quality</div>
+                        <div class="metric-value" style="font-size: 14px; color: var(--success);">{{ result.signal_quality }}</div>
+                    </div>
+                </div>
+
+                <!-- ============================== -->
+                <!-- 3. ECG WAVEFORM PARAMETERS     -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📈 ECG Waveform Parameters</h2>
+
+                <!-- Row 1: Heart Rate / RR / QRS -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px;">
                     <div class="metric-box">
                         <div class="metric-label">Heart Rate</div>
                         <div class="metric-value" style="color: #f43f5e;">{{ result.heart_rate }}</div>
@@ -165,6 +166,10 @@
                         <div class="metric-label">QRS Duration</div>
                         <div class="metric-value">{{ result.qrs_duration }}</div>
                     </div>
+                </div>
+
+                <!-- Row 2: PR / QT / QTc -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px;">
                     <div class="metric-box">
                         <div class="metric-label">PR Interval</div>
                         <div class="metric-value">{{ result.pr_interval }}</div>
@@ -177,6 +182,10 @@
                         <div class="metric-label">QTc (Corrected)</div>
                         <div class="metric-value">{{ result.qtc }}</div>
                     </div>
+                </div>
+
+                <!-- Row 3: SDNN / RMSSD / Signal Quality -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px;">
                     <div class="metric-box">
                         <div class="metric-label">HRV SDNN</div>
                         <div class="metric-value" style="color: #a78bfa;">{{ result.sdnn }}</div>
@@ -191,24 +200,81 @@
                     </div>
                 </div>
 
-                <!-- ECG Waveform Graph -->
+                <!-- ============================== -->
+                <!-- 4. ECG WAVEFORM GRAPH          -->
+                <!-- ============================== -->
                 {% if result.waveform %}
-                <div style="background: rgba(15, 23, 42, 0.7); border-radius: 18px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 24px; text-align: center;">
-                    <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">ECG SIGNAL WAVEFORM PLOT</div>
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📉 ECG Signal Waveform</h2>
+
+                <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 28px; text-align: center;">
                     <img src="{{ url_for('uploaded_file', filename=result.waveform) }}" alt="ECG Waveform" style="max-width: 100%; border-radius: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.3);">
                 </div>
                 {% endif %}
 
-                <!-- Clinical Interpretation & Recommendations -->
-                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 18px; padding: 24px; border: 1px solid var(--border-color);">
-                    <h4 style="color: #f43f5e; margin-bottom: 8px; font-size: 16px; font-weight: 600;">🩺 Clinical QCNN Interpretation</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 18px; line-height: 1.6;">{{ result.interpretation }}</p>
+                <!-- ============================== -->
+                <!-- 5. CLINICAL INTERPRETATION     -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🩺 Clinical QCNN Interpretation</h2>
 
-                    <h4 style="color: #f43f5e; margin-bottom: 8px; font-size: 16px; font-weight: 600;">💡 Recommended Next Steps</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6;">{{ result.recommendation }}</p>
+                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 24px;">
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.interpretation }}</p>
                 </div>
+
+                <!-- ============================== -->
+                <!-- 6. RECOMMENDATIONS             -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">💡 Recommended Next Steps</h2>
+
+                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 28px;">
+                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.recommendation }}</p>
+                </div>
+
+                <!-- ============================== -->
+                <!-- 7. PATIENT REPORT / PDF        -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📄 Patient Report</h2>
+
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 16px; color: var(--success); font-size: 14px;">
+                    ✅ Complete report generated successfully.
+                </div>
+
+                <form action="/download_ecg_report" method="POST">
+                    {% with meta = patient, meta_fields = patient_fields %}
+                        {% include "_meta_hidden.html" %}
+                    {% endwith %}
+                    <input type="hidden" name="prediction" value="{{ result.prediction }}">
+                    <input type="hidden" name="abnormal_type" value="{{ result.abnormal_type }}">
+                    <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                    <input type="hidden" name="heart_rate" value="{{ result.heart_rate }}">
+                    <input type="hidden" name="rr_interval" value="{{ result.rr_interval }}">
+                    <input type="hidden" name="qrs_duration" value="{{ result.qrs_duration }}">
+                    <input type="hidden" name="pr_interval" value="{{ result.pr_interval }}">
+                    <input type="hidden" name="qt_interval" value="{{ result.qt_interval }}">
+                    <input type="hidden" name="qtc" value="{{ result.qtc }}">
+                    <input type="hidden" name="sdnn" value="{{ result.sdnn }}">
+                    <input type="hidden" name="rmssd" value="{{ result.rmssd }}">
+                    <input type="hidden" name="interpretation" value="{{ result.interpretation }}">
+                    <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
+                    <input type="hidden" name="atrial_probability" value="{{ result.atrial_probability }}">
+                    <input type="hidden" name="signal_quality" value="{{ result.signal_quality }}">
+                    <input type="hidden" name="input_source" value="{{ result.input_source }}">
+                    <button type="submit" class="btn-primary" style="width: 100%; padding: 14px 24px; background: var(--ecg-gradient); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
+                        📥 Download Complete Patient Report (PDF)
+                    </button>
+                </form>
+
             </div>
             {% endif %}
+
+            <!-- ============================== -->
+            <!-- 8. DISCLAIMER                  -->
+            <!-- ============================== -->
+            <div style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 10px;">
+                <p style="color: var(--text-muted); font-size: 13px; line-height: 1.7;">
+                    ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. The Quantum CNN provides a rhythm classification prediction and waveform analysis.<br>
+                    The ECG parameters, clinical interpretation and recommendations are model-derived estimates and are not clinical measurements. Clinical verification required.
+                </p>
+            </div>
         </div>
 
         <footer>

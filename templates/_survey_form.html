@@ -1,0 +1,60 @@
+{# Survey / acquisition metadata block for the satellite analysis page. #}
+<div class="meta-form">
+    <div class="meta-form-header">
+        <h3>🛰️ Survey & Acquisition Details</h3>
+    </div>
+    <p class="meta-form-note">
+        Describe where and when the scene was captured. These details are printed on
+        the PDF report and are not stored on the server.
+    </p>
+
+    <div class="field-grid">
+        <div class="field">
+            <label for="site_name">Site / Area Name</label>
+            <input type="text" id="site_name" name="site_name" maxlength="200"
+                   autocomplete="off" placeholder="e.g. Western Ghats — Block 4"
+                   value="{{ survey.get('site_name', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="survey_id">Survey Reference ID</label>
+            <input type="text" id="survey_id" name="survey_id" maxlength="200"
+                   autocomplete="off" placeholder="e.g. SRV-2026-014"
+                   value="{{ survey.get('survey_id', '') }}">
+            <div class="field-hint">Used to name the downloaded report file.</div>
+        </div>
+
+        <div class="field">
+            <label for="coordinates">Coordinates (lat, lon)</label>
+            <input type="text" id="coordinates" name="coordinates" maxlength="200"
+                   autocomplete="off" placeholder="e.g. 15.2993, 74.1240"
+                   value="{{ survey.get('coordinates', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="capture_date">Image Capture Date</label>
+            <input type="date" id="capture_date" name="capture_date"
+                   value="{{ survey.get('capture_date', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="sensor">Sensor / Source</label>
+            <input type="text" id="sensor" name="sensor" maxlength="200"
+                   autocomplete="off" placeholder="e.g. Sentinel-2 L2A, drone RGB"
+                   value="{{ survey.get('sensor', '') }}">
+        </div>
+
+        <div class="field">
+            <label for="analyst">Analyst</label>
+            <input type="text" id="analyst" name="analyst" maxlength="200"
+                   autocomplete="off" placeholder="Name of the reviewing analyst"
+                   value="{{ survey.get('analyst', '') }}">
+        </div>
+
+        <div class="field field-full">
+            <label for="survey_notes">Survey Notes</label>
+            <textarea id="survey_notes" name="survey_notes" maxlength="1000"
+                      placeholder="Purpose of the survey, prior observations, conditions at capture…">{{ survey.get('survey_notes', '') }}</textarea>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,14 @@
+{# Read-only metadata summary rendered above analysis results.
+   Expects: meta_rows (list of label/value pairs) and meta (report_id, generated_at). #}
+<dl class="meta-summary">
+    {% for label, value in meta_rows %}
+    <div class="meta-summary-item">
+        <dt>{{ label }}</dt>
+        <dd>{{ value }}</dd>
+    </div>
+    {% endfor %}
+    <div class="report-stamp">
+        <span><strong>Report ID:</strong> {{ meta.report_id }}</span>
+        <span><strong>Generated:</strong> {{ meta.generated_at }}</span>
+    </div>
+</dl>

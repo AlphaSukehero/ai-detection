@@ -29,10 +29,10 @@
             <!-- Upload Panel -->
             <div class="panel">
                 <div class="panel-title">
-                    <span>🧠</span> Upload Brain MRI Image
+                    <span>🧠</span> Patient Details & Brain MRI Upload
                 </div>
                 <div class="panel-subtitle">
-                    Select or upload a brain magnetic resonance imaging scan (.jpg, .jpeg, .png, .dcm / DICOM) for deep AI classification across 4 target classes: Glioma, Meningioma, Pituitary Tumor, or No Tumor.
+                    Enter the patient details, then select or upload a brain magnetic resonance imaging scan (.jpg, .jpeg, .png, .dcm / DICOM) for deep AI classification across 4 target classes: Glioma, Meningioma, Pituitary Tumor, or No Tumor.
                 </div>
 
                 {% if error %}
@@ -42,12 +42,22 @@
                 {% endif %}
 
                 <form action="/analyze_brain_tumor" method="POST" enctype="multipart/form-data" id="mri-form">
+                    {% include "_patient_form.html" %}
+
+                    <h3 style="font-family: var(--font-heading); font-size: 16px; margin: 28px 0 14px; color: var(--text-primary);">
+                        🧠 MRI Scan
+                    </h3>
+
                     <div class="upload-dropzone" onclick="document.getElementById('mri_file').click();">
                         <div class="upload-icon">📁</div>
-                        <h3 style="margin-bottom: 6px; font-weight: 600;">Drag & Drop MRI scan here or click to browse</h3>
+                        <h3 style="margin-bottom: 6px; font-weight: 600;" id="upload-label">Drag &amp; Drop MRI scan here or click to browse</h3>
                         <p style="color: var(--text-muted); font-size: 13px;">Supports JPG / PNG / DICOM images up to 32 MB</p>
-                        <input type="file" name="mri_file" id="mri_file" class="file-input" accept="image/*,.dcm,.dicom" onchange="document.getElementById('mri-form').submit();">
+                        <input type="file" name="mri_file" id="mri_file" class="file-input" accept="image/*,.dcm,.dicom" onchange="document.getElementById('upload-label').innerText = 'Selected: ' + this.files[0].name;">
                     </div>
+
+                    <button type="submit" class="btn-primary" style="width: 100%; margin-top: 16px; background: var(--mri-gradient);">
+                        🚀 Analyze MRI Scan &rarr;
+                    </button>
 
                     <!-- Quick Sample Buttons -->
                     <div style="text-align: center; margin-top: 20px;">
@@ -62,66 +72,184 @@
                 </form>
             </div>
 
-            <!-- Result Display -->
+            <!-- ============================================================ -->
+            <!-- RESULT DISPLAY (matches reference Streamlit output) -->
+            <!-- ============================================================ -->
             {% if result %}
             <div class="result-card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; flex-wrap: wrap; gap: 20px;">
-                    <div>
-                        <div class="status-badge {% if result.prediction == 'No Tumor' %}good{% else %}abnormal{% endif %}">
-                            {{ result.prediction | upper }} DETECTED
-                        </div>
-                        <h2 style="font-family: var(--font-heading); font-size: 28px; margin-bottom: 6px;">
-                            Diagnosis: {{ result.prediction }}
-                        </h2>
-                        <p style="color: var(--text-secondary); font-size: 15px;">Model Confidence: <strong>{{ result.confidence }}%</strong></p>
-                    </div>
 
-                    <!-- Download PDF Form -->
-                    <form action="/download_brain_tumor_report" method="POST">
-                        <input type="hidden" name="prediction" value="{{ result.prediction }}">
-                        <input type="hidden" name="confidence" value="{{ result.confidence }}">
-                        <input type="hidden" name="findings" value="{{ result.findings }}">
-                        <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
-                        <button type="submit" class="btn-primary" style="width: auto; padding: 10px 20px;">
-                            📄 Download PDF Report
-                        </button>
-                    </form>
+                {% if patient %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🗂️ Patient & Study Details</h2>
+                {% with meta = patient, meta_rows = patient_rows %}
+                    {% include "_meta_summary.html" %}
+                {% endwith %}
+                {% endif %}
+
+
+                <!-- ============================== -->
+                <!-- 1. PREDICTION RESULT           -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 Prediction Result</h2>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 28px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Tumor Type</div>
+                        <div class="metric-value" style="color: #a5b4fc;">{{ result.prediction }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Model Confidence</div>
+                        <div class="metric-value" style="color: var(--success);">{{ result.confidence }}%</div>
+                    </div>
                 </div>
 
-                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 24px; margin-top: 30px;">
-                    <!-- MRI Preview Image -->
+                <!-- ============================== -->
+                <!-- 2. CLASS PROBABILITIES         -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📈 Class Probabilities</h2>
+
+                <div style="margin-bottom: 28px;">
+                    {% for class_name, prob in result.probabilities.items() %}
+                    <div style="margin-bottom: 14px;">
+                        <div style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
+                            {{ class_name }} — {{ prob }}%
+                        </div>
+                        <div class="progress-bar-container">
+                            <div class="progress-bar-fill" style="width: {{ prob }}%; {% if class_name == result.prediction %}background: var(--mri-gradient);{% endif %}"></div>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
+
+                <!-- ============================== -->
+                <!-- 3. NO TUMOR OR TUMOR DETECTED  -->
+                <!-- ============================== -->
+                {% if result.prediction == 'No Tumor' %}
+
+                <!-- NO TUMOR SUCCESS MESSAGE -->
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 16px 20px; border-radius: 12px; margin-bottom: 28px; color: var(--success); font-size: 15px;">
+                    🟢 The model predicted No Tumor.
+                </div>
+
+                {% else %}
+
+                <!-- ======================================== -->
+                <!-- 4. EXPLAINABLE AI — GRAD-CAM             -->
+                <!-- ======================================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🔥 Explainable AI — Grad-CAM</h2>
+
+                <!-- Original MRI + Grad-CAM Heatmap side by side -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px;">
                     <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color);">
-                        <div style="font-size: 13px; color: var(--text-muted); margin-bottom: 12px; font-weight: 600;">ANALYZED MRI SCAN</div>
-                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="MRI Image" style="max-width: 100%; max-height: 260px; border-radius: 12px; object-fit: contain;">
+                        <div style="font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">Original MRI</div>
+                        <img src="{{ url_for('uploaded_file', filename=result.image_filename) }}" alt="Original MRI" style="max-width: 100%; max-height: 300px; border-radius: 10px; object-fit: contain;">
                     </div>
+                    {% if result.heatmap_filename %}
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color);">
+                        <div style="font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px;">Grad-CAM Heatmap</div>
+                        <img src="{{ url_for('uploaded_file', filename=result.heatmap_filename) }}" alt="Grad-CAM Heatmap" style="max-width: 100%; max-height: 300px; border-radius: 10px; object-fit: contain;">
+                    </div>
+                    {% endif %}
+                </div>
 
-                    <!-- Probability Distribution Breakdown -->
-                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
-                        <h4 style="font-family: var(--font-heading); margin-bottom: 16px; font-size: 16px;">Class Probability Breakdown</h4>
-                        {% for class_name, prob in result.probabilities.items() %}
-                        <div style="margin-bottom: 14px;">
-                            <div style="display: flex; justify-content: space-between; font-size: 14px; margin-bottom: 4px;">
-                                <span style="color: var(--text-primary); font-weight: 500;">{{ class_name }}</span>
-                                <span style="color: var(--text-secondary); font-weight: 600;">{{ prob }}%</span>
-                            </div>
-                            <div class="progress-bar-container">
-                                <div class="progress-bar-fill" style="width: {{ prob }}%; {% if class_name == result.prediction %}background: var(--mri-gradient);{% endif %}"></div>
-                            </div>
-                        </div>
-                        {% endfor %}
+                <!-- ============================== -->
+                <!-- 5. TUMOR-INFLUENCING REGION    -->
+                <!-- ============================== -->
+                {% if result.highlighted_filename %}
+                <h3 style="font-family: var(--font-heading); font-size: 18px; margin-bottom: 16px;">🎯 Tumor-Influencing Region</h3>
+
+                <!-- Centered highlighted image -->
+                <div style="display: flex; justify-content: center; margin-bottom: 16px;">
+                    <div style="background: rgba(15, 23, 42, 0.7); border-radius: 16px; padding: 16px; text-align: center; border: 1px solid var(--border-color); max-width: 500px;">
+                        <img src="{{ url_for('uploaded_file', filename=result.highlighted_filename) }}" alt="Highlighted Tumor Region" style="max-width: 100%; max-height: 320px; border-radius: 10px; object-fit: contain;">
+                        <div style="color: var(--text-muted); font-size: 12px; margin-top: 8px;">Red = high activation | Yellow = estimated boundary</div>
                     </div>
                 </div>
 
-                <!-- Radiological Findings & Next Steps -->
-                <div style="grid-column: 1 / -1; margin-top: 24px; background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color);">
-                    <h4 style="color: #a5b4fc; margin-bottom: 8px; font-size: 16px;">📋 Radiological Findings</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; margin-bottom: 16px; line-height: 1.6;">{{ result.findings }}</p>
-                    
-                    <h4 style="color: #a5b4fc; margin-bottom: 8px; font-size: 16px;">💡 Recommended Follow-up</h4>
-                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.6;">{{ result.recommendation }}</p>
+                <!-- Info disclaimer -->
+                <div style="background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 28px; color: #60a5fa; font-size: 14px;">
+                    ℹ️ The highlighted region represents the image area that most influenced the model prediction. It is not a clinically validated tumor segmentation.
                 </div>
+                {% endif %}
+
+                <!-- ============================== -->
+                <!-- 6. TUMOR ANALYSIS              -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📊 Tumor Analysis</h2>
+
+                <!-- Row 1: Area / Width / Height -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Area</div>
+                        <div class="metric-value" style="color: #f43f5e;">{{ result.area }}%</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Width</div>
+                        <div class="metric-value">{{ result.width }} px</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Height</div>
+                        <div class="metric-value">{{ result.height }} px</div>
+                    </div>
+                </div>
+
+                <!-- Row 2: Location / Severity / Spread -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Location</div>
+                        <div class="metric-value" style="font-size: 16px; color: #60a5fa;">{{ result.location }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Severity</div>
+                        <div class="metric-value" style="font-size: 16px; color: {% if result.severity == 'High' %}var(--danger){% elif result.severity == 'Moderate' %}var(--warning){% else %}var(--success){% endif %};">{{ result.severity }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">Estimated Spread</div>
+                        <div class="metric-value" style="font-size: 16px; color: #a78bfa;">{{ result.spread }}</div>
+                    </div>
+                </div>
+
+                {% endif %}
+
+                <!-- ============================== -->
+                <!-- 7. PATIENT REPORT / PDF        -->
+                <!-- ============================== -->
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📄 Patient Report</h2>
+
+                <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 16px; color: var(--success); font-size: 14px;">
+                    ✅ Complete report generated successfully.
+                </div>
+
+                <form action="/download_brain_tumor_report" method="POST">
+                    {% with meta = patient, meta_fields = patient_fields %}
+                        {% include "_meta_hidden.html" %}
+                    {% endwith %}
+                    <input type="hidden" name="prediction" value="{{ result.prediction }}">
+                    <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                    <input type="hidden" name="findings" value="{{ result.findings }}">
+                    <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
+                    <input type="hidden" name="area" value="{{ result.area }}">
+                    <input type="hidden" name="width" value="{{ result.width }}">
+                    <input type="hidden" name="height" value="{{ result.height }}">
+                    <input type="hidden" name="location" value="{{ result.location }}">
+                    <input type="hidden" name="severity" value="{{ result.severity }}">
+                    <input type="hidden" name="spread" value="{{ result.spread }}">
+                    <button type="submit" class="btn-primary" style="width: 100%; padding: 14px 24px; background: var(--mri-gradient); box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);">
+                        📥 Download Complete Patient Report (PDF)
+                    </button>
+                </form>
+
             </div>
             {% endif %}
+
+            <!-- ============================== -->
+            <!-- 8. DISCLAIMER                  -->
+            <!-- ============================== -->
+            <div style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 10px;">
+                <p style="color: var(--text-muted); font-size: 13px; line-height: 1.7;">
+                    ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. The CNN provides a classification prediction and Grad-CAM provides an explanation of image regions influencing that prediction.<br>
+                    The highlighted region, estimated area, size, location, severity and spread are model-derived estimates and are not clinical measurements.
+                </p>
+            </div>
         </div>
 
         <footer>
