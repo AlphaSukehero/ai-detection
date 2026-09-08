@@ -15,6 +15,7 @@ from sklearn.utils.class_weight import compute_class_weight
 from mlkit.registry import save_model_card
 
 SEED = 42
+EPOCHS = int(os.environ.get("EPOCHS", "40"))
 CLASSES = ["N", "S", "V", "F", "Q"]
 tf.keras.utils.set_random_seed(SEED)
 
@@ -51,7 +52,7 @@ def main():
     print("class weights:", {CLASSES[k]: round(v, 2) for k, v in class_weight.items()})
 
     model = build()
-    model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=40,
+    model.fit(x_train, y_train, validation_data=(x_val, y_val), epochs=EPOCHS,
               batch_size=128, class_weight=class_weight, verbose=2, callbacks=[
                   tf.keras.callbacks.EarlyStopping("val_loss", patience=6,
                                                    restore_best_weights=True),

@@ -12,6 +12,7 @@ from sklearn.metrics import classification_report, confusion_matrix
 from mlkit.registry import save_model_card
 
 SEED, SIZE, BATCH = 42, 224, 32
+EPOCHS = int(os.environ.get("EPOCHS", "60"))
 CLASSES = ["glioma", "meningioma", "notumor", "pituitary"]
 CACHE = "data/processed/mri_vgg16_features"
 tf.keras.utils.set_random_seed(SEED)
@@ -56,7 +57,7 @@ def main():
         layers.Dense(len(CLASSES), activation="softmax")])
     head.compile(tf.keras.optimizers.Adam(1e-3), "categorical_crossentropy",
                  metrics=["accuracy"])
-    head.fit(xtr, ytr, validation_data=(xva, yva), epochs=60, batch_size=64,
+    head.fit(xtr, ytr, validation_data=(xva, yva), epochs=EPOCHS, batch_size=64,
              verbose=2, callbacks=[
                  tf.keras.callbacks.EarlyStopping(
                      "val_loss", patience=8, restore_best_weights=True)])

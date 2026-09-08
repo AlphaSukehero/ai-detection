@@ -9,7 +9,8 @@ from tensorflow.keras import layers, models
 from sklearn.metrics import classification_report, confusion_matrix
 from mlkit.registry import save_model_card
 
-SEED, SIZE, BATCH, EPOCHS = 42, 64, 64, 40
+SEED, SIZE, BATCH = 42, 64, 64
+EPOCHS = int(os.environ.get("EPOCHS", "40"))
 CLASSES = ["AnnualCrop", "Forest", "HerbaceousVegetation", "Highway", "Industrial",
            "Pasture", "PermanentCrop", "Residential", "River", "SeaLake"]
 tf.keras.utils.set_random_seed(SEED)

@@ -9,7 +9,8 @@ from tensorflow.keras import layers, models
 from sklearn.metrics import classification_report, confusion_matrix
 from mlkit.registry import save_model_card
 
-SEED, SIZE, BATCH, EPOCHS = 42, 128, 32, 30
+SEED, SIZE, BATCH = 42, 128, 32
+EPOCHS = int(os.environ.get("EPOCHS", "30"))
 CLASSES = ["glioma", "meningioma", "notumor", "pituitary"]
 tf.keras.utils.set_random_seed(SEED)
 
