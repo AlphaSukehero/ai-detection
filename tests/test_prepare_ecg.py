@@ -3,8 +3,14 @@ import numpy as np
 import pytest
 
 OUT = "data/processed/ecg"
-pytestmark = pytest.mark.skipif(not os.path.exists(f"{OUT}/train.npz"),
-                                reason="run scripts/prepare_ecg.py first")
+# Guard on every split, not just train: an interrupted preparation run leaves
+# zero-byte .npz files behind, which read back as a bare EOFError.
+_SPLITS = ("train", "val", "test")
+_ready = all(os.path.getsize(f"{OUT}/{s}.npz") > 0
+             for s in _SPLITS if os.path.exists(f"{OUT}/{s}.npz")) and \
+         all(os.path.exists(f"{OUT}/{s}.npz") for s in _SPLITS)
+pytestmark = pytest.mark.skipif(
+    not _ready, reason="run scripts/prepare_ecg.py first (splits missing or empty)")
 
 
 def _records(split):

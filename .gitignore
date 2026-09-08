@@ -43,3 +43,4 @@ Thumbs.db
 # Prepared datasets (reproducible from scripts/prepare_*.py)
 data/raw/
 data/processed/
+.gstack/
