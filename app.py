@@ -43,6 +43,8 @@ except Exception as e:
     TF_AVAILABLE = False
 
 from mlkit.registry import RegistryError, load_card, validate_card
+from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
+from ecg.digitize import extract_leads
 
 # Optional DICOM support
 try:
@@ -551,73 +553,6 @@ def predict_ecg(X):
     }
 
 
-def calculate_ecg_parameters(ecg_values, sampling_rate=360):
-    signal = np.asarray(ecg_values, dtype=float).flatten()
-    parameters = {
-        "heart_rate": "—",
-        "rr_interval": "—",
-        "qrs_duration": "—",
-        "pr_interval": "145.0 ms",
-        "qt_interval": "—",
-        "qtc": "—",
-        "sdnn": "—",
-        "rmssd": "—",
-        "signal_quality": "Good"
-    }
-
-    if len(signal) < 100:
-        parameters["signal_quality"] = "Insufficient data"
-        return parameters
-
-    signal = signal - np.mean(signal)
-    std = np.std(signal)
-    if std > 0:
-        signal = signal / std
-
-    peaks, _ = find_peaks(signal, distance=int(0.25 * sampling_rate), prominence=0.5)
-
-    if len(peaks) >= 2:
-        rr_intervals = np.diff(peaks) / sampling_rate
-        mean_rr = float(np.mean(rr_intervals))
-        heart_rate = 60.0 / mean_rr
-
-        parameters["heart_rate"] = f"{heart_rate:.1f} bpm"
-        parameters["rr_interval"] = f"{mean_rr:.3f} s"
-
-        if len(rr_intervals) >= 2:
-            sdnn = np.std(rr_intervals, ddof=1) * 1000
-            parameters["sdnn"] = f"{sdnn:.1f} ms"
-
-        if len(rr_intervals) >= 3:
-            rmssd = np.sqrt(np.mean(np.diff(rr_intervals) ** 2)) * 1000
-            parameters["rmssd"] = f"{rmssd:.1f} ms"
-
-        qrs_values = []
-        thresh = 0.1 * np.max(np.abs(signal))
-        for peak in peaks:
-            left = peak
-            while left > 0 and abs(signal[left]) > thresh:
-                left -= 1
-            right = peak
-            while right < len(signal) - 1 and abs(signal[right]) > thresh:
-                right += 1
-            duration = (right - left) / sampling_rate
-            if 0.03 <= duration <= 0.20:
-                qrs_values.append(duration)
-
-        if qrs_values:
-            parameters["qrs_duration"] = f"{np.mean(qrs_values) * 1000:.1f} ms"
-
-        qt = 0.40
-        qtc = qt / np.sqrt(mean_rr)
-        parameters["qt_interval"] = f"{qt * 1000:.0f} ms"
-        parameters["qtc"] = f"{qtc * 1000:.0f} ms"
-    else:
-        parameters["signal_quality"] = "Unable to detect sufficient R-peaks"
-
-    return parameters
-
-
 def create_ecg_plot(ecg_values, filename):
     signal = np.asarray(ecg_values, dtype=float).flatten()
     plt.figure(figsize=(12, 4))
@@ -687,59 +622,6 @@ def load_image_rgb(image_path):
         return img.convert("RGB")
     except Exception as e:
         raise ValueError(f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}")
-
-
-def extract_ecg_signal_from_image(image_path):
-    """Digitize an ECG strip image into a 1D signal usable by the QCNN pipeline.
-
-    The trace (dark line) is isolated by thresholding the inverted grayscale
-    image; per column the vertical center-of-mass is tracked and inverted so
-    upward deflections become positive peaks.
-    """
-    img = Image.open(image_path).convert("L")
-    target_w = 1400
-    target_h = max(200, int(round(img.height * target_w / max(1, img.width))))
-    img = img.resize((target_w, target_h))
-    arr = np.asarray(img, dtype=np.float32)
-
-    inv = 255.0 - arr
-    thr = float(np.percentile(inv, 88))
-    if thr <= 0:
-        # A mostly-white strip makes the percentile 0, which would select every
-        # pixel; fall back to any ink that is darker than the page.
-        thr = max(1.0, float(inv.max()) * 0.5)
-    mask = inv >= thr
-
-    rows = np.arange(arr.shape[0], dtype=float)
-    y_center = np.full(arr.shape[1], arr.shape[0] / 2.0, dtype=float)
-
-    for x in range(arr.shape[1]):
-        m = mask[:, x]
-        # np.average raises when every weight is zero (a column with no trace),
-        # so require a non-zero weight sum before using it.
-        if m.sum() >= 1:
-            weights = inv[m, x]
-            total = float(weights.sum())
-            if total > 1e-6:
-                y_center[x] = float(np.average(rows[m], weights=weights))
-            else:
-                y_center[x] = float(np.mean(rows[m]))
-
-    signal = (arr.shape[0] - 1.0 - y_center)
-    signal = signal - np.mean(signal)
-    std = float(np.std(signal))
-    if std > 1e-6:
-        signal = signal / std
-
-    # Resample to a clean multiple of the 280-sample window
-    n_windows = max(1, int(round(len(signal) / 280)))
-    target_len = n_windows * 280
-    if len(signal) != target_len:
-        x_old = np.arange(len(signal))
-        x_new = np.linspace(0, len(signal) - 1, target_len)
-        signal = np.interp(x_new, x_old, signal)
-
-    return signal.reshape(-1, 280)
 
 
 # ============================================================
@@ -1286,6 +1168,32 @@ def sample_file(filename):
 # ANALYZE ECG
 # ------------------------------------------------------------
 
+ECG_QUALITY_PARAMS = ("heart_rate", "rhythm", "pr_interval", "qrs_duration",
+                      "qt_interval", "qtc", "st_segment", "axis")
+
+
+def _signal_quality(report):
+    """Summarise how much of the ECG was actually measurable.
+
+    Derived from the per-parameter quality flags across the 8 clinical
+    parameters, not from the presence of a heart rate alone - a strip whose
+    PR, QT, ST and axis are all unavailable is not "Good".
+
+    Cut-offs: "Good" needs at least 6 of 8 parameters measured with none of
+    them low-confidence downgrading the majority (>= 6 OK); "Partial" needs
+    at least 3 measured at any confidence; below that, "Insufficient data".
+    """
+    from ecg.quality import OK, UNAVAILABLE
+    flags = [report[k].quality for k in ECG_QUALITY_PARAMS if k in report]
+    n_ok = sum(1 for f in flags if f == OK)
+    n_measured = sum(1 for f in flags if f != UNAVAILABLE)
+    if n_ok >= 6:
+        return "Good"
+    if n_measured >= 3:
+        return "Partial"
+    return "Insufficient data"
+
+
 @app.route("/analyze_ecg", methods=["POST"])
 def analyze_ecg():
     file = request.files.get("ecg_file")
@@ -1322,17 +1230,27 @@ def analyze_ecg():
 
     try:
         if is_image:
-            # Digitize an ECG strip photograph/screenshot into a signal
-            X = extract_ecg_signal_from_image(filepath)
-            ecg_values = X
-            input_source = "ECG image digitized into signal"
+            digitized = extract_leads(filepath)
+            leads = digitized["leads"]
+            ecg_values = leads.get("II", next(iter(leads.values())))
+            X = prepare_qcnn_input(ecg_values)
+            # A digitized trace has one sample per pixel COLUMN, so its true
+            # sampling rate is set by the paper speed: 25 mm/s x px/mm. It is
+            # NOT the 360 Hz of the MIT-BIH CSV path. With no grid there is no
+            # timebase at all; analyse() then reports everything unavailable.
+            px_per_mm = digitized["px_per_mm"]
+            image_fs = fs_from_scale(px_per_mm) if px_per_mm is not None else 360.0
+            report = analyse_ecg_parameters(leads, fs=image_fs,
+                                            px_per_mm=px_per_mm,
+                                            from_image=True)
+            input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
         else:
             ecg_values = load_ecg_file(filepath)
             X = prepare_qcnn_input(ecg_values)
+            report = analyse_ecg_parameters(ecg_values, fs=360.0)
             input_source = "ECG data file"
 
         qcnn_result = predict_ecg(X)
-        parameters = calculate_ecg_parameters(ecg_values)
 
         plot_filename = "ecg_waveform_" + uuid.uuid4().hex[:8] + ".png"
         create_ecg_plot(ecg_values, plot_filename)
@@ -1356,15 +1274,18 @@ def analyze_ecg():
             "beat_distribution": qcnn_result.get("beat_distribution"),
             "beat_counts": qcnn_result.get("beat_counts"),
             "beats_analyzed": qcnn_result.get("beats_analyzed"),
-            "heart_rate": parameters["heart_rate"],
-            "rr_interval": parameters["rr_interval"],
-            "qrs_duration": parameters["qrs_duration"],
-            "pr_interval": parameters["pr_interval"],
-            "qt_interval": parameters["qt_interval"],
-            "qtc": parameters["qtc"],
-            "sdnn": parameters["sdnn"],
-            "rmssd": parameters["rmssd"],
-            "signal_quality": parameters["signal_quality"],
+            "heart_rate": report["display"]["heart_rate"],
+            "rr_interval": report["display"]["rr_interval"],
+            "qrs_duration": report["display"]["qrs_duration"],
+            "pr_interval": report["display"]["pr_interval"],
+            "qt_interval": report["display"]["qt_interval"],
+            "qtc": report["display"]["qtc"],
+            "sdnn": report["display"]["sdnn"],
+            "rmssd": report["display"]["rmssd"],
+            "rhythm": report["display"]["rhythm"],
+            "st_segment": report["display"]["st_segment"],
+            "axis": report["display"]["axis"],
+            "signal_quality": _signal_quality(report),
             "interpretation": interpretation,
             "recommendation": recommendation,
             "waveform": plot_filename,
@@ -1735,6 +1656,17 @@ def _slug(value, fallback):
 # DOWNLOAD REPORTS (PDF)
 # ------------------------------------------------------------
 
+def _pdf_value(raw):
+    """Render an unmeasured parameter explicitly in the PDF.
+
+    A dash in a clinical report is ambiguous - it could mean zero, or missing.
+    "Not measurable" says which.
+    """
+    if raw is None or raw.strip() in {"", "—", "-"}:
+        return "Not measurable"
+    return raw
+
+
 @app.route("/download_ecg_report", methods=["POST"])
 def download_ecg_report():
     form = request.form
@@ -1752,14 +1684,17 @@ def download_ecg_report():
         ]),
         ("table", "2. ECG Waveform Parameters", [
             ("Measurement", "Value"),
-            ("Heart Rate", form.get("heart_rate", "—")),
-            ("RR Interval", form.get("rr_interval", "—")),
-            ("QRS Duration", form.get("qrs_duration", "—")),
-            ("PR Interval", form.get("pr_interval", "—")),
-            ("QT Interval", form.get("qt_interval", "—")),
-            ("QTc (Corrected)", form.get("qtc", "—")),
-            ("HRV SDNN", form.get("sdnn", "—")),
-            ("HRV RMSSD", form.get("rmssd", "—")),
+            ("Heart Rate", _pdf_value(form.get("heart_rate"))),
+            ("RR Interval", _pdf_value(form.get("rr_interval"))),
+            ("QRS Duration", _pdf_value(form.get("qrs_duration"))),
+            ("PR Interval", _pdf_value(form.get("pr_interval"))),
+            ("QT Interval", _pdf_value(form.get("qt_interval"))),
+            ("QTc (Corrected)", _pdf_value(form.get("qtc"))),
+            ("HRV SDNN", _pdf_value(form.get("sdnn"))),
+            ("HRV RMSSD", _pdf_value(form.get("rmssd"))),
+            ("Rhythm", _pdf_value(form.get("rhythm"))),
+            ("ST Segment", _pdf_value(form.get("st_segment"))),
+            ("QRS Axis", _pdf_value(form.get("axis"))),
         ]),
         ("text", "3. Clinical Interpretation", form.get("interpretation", NOT_PROVIDED)),
         ("text", "4. Recommended Next Steps", form.get("recommendation", NOT_PROVIDED)),

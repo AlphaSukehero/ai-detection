@@ -17,7 +17,9 @@
 - ST: Elevated if `> +1.0 mm`, Depressed if `< -1.0 mm`, else Normal.
 - Rhythm: Regular if RR coefficient of variation `< 0.10`, else Irregular.
 - Axis requires 12-lead; single-lead yields `None` with reason `"Requires 12-lead"`.
-- Run tests with `.venv/bin/pytest`. Never bare `pytest`.
+- Run tests with `.venv/bin/python -m pytest`. Never bare `pytest`, and never
+  `.venv/bin/pytest` — that console script has a stale shebang pointing at a
+  previous checkout path and cannot execute.
 - Every measurement function takes a signal in **millivolt-normalised units** and returns times in **seconds**; only the formatting layer converts to ms.
 
 ---
@@ -52,7 +54,7 @@ def test_unavailable_measurement_renders_dash():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_quality.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_quality.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -82,7 +84,7 @@ class Measurement:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_quality.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_quality.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -115,10 +117,13 @@ from ecg.delineate import detect_r_peaks
 
 def _synth_ecg(n_beats=10, fs=360.0, rr=0.8):
     """Build a signal with sharp R spikes at exactly known positions."""
-    n = int(n_beats * rr * fs)
+    # Offset the first beat off sample 0: find_peaks needs neighbours on both
+    # sides, so a peak at index 0 is undetectable by construction.
+    lead_in = 100
+    n = int(n_beats * rr * fs) + lead_in
     sig = np.zeros(n)
-    idx = (np.arange(n_beats) * rr * fs).astype(int)
-    idx = idx[idx < n]
+    idx = (np.arange(n_beats) * rr * fs).astype(int) + lead_in
+    idx = idx[idx < n - 1]
     for i in idx:
         sig[i] = 3.0
         if i > 0:
@@ -142,7 +147,7 @@ def test_returns_empty_array_for_flat_signal():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.delineate'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -175,7 +180,7 @@ def detect_r_peaks(signal, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -233,7 +238,7 @@ def test_irregular_rhythm_for_varying_rr():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.parameters'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -277,7 +282,7 @@ def rhythm(peaks, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (4 passed)
 
 - [ ] **Step 5: Commit**
@@ -310,9 +315,12 @@ from ecg.delineate import qrs_bounds
 def test_qrs_bounds_bracket_the_r_peak():
     fs = 360.0
     sig = np.zeros(720)
-    # A triangular QRS ~80 ms wide centred at index 360
-    for off, amp in [(-14, 0.2), (-7, 1.0), (0, 3.0), (7, 1.0), (14, 0.2)]:
-        sig[360 + off] = amp
+    # A dense triangular QRS ~80 ms wide centred at index 360. Every sample in
+    # the complex is filled: a real trace is contiguous, and a boundary walk
+    # must not be able to halt on a gap between spikes.
+    half = int(0.04 * fs)                      # 40 ms each side
+    for off in range(-half, half + 1):
+        sig[360 + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
     onset, offset = qrs_bounds(sig, peak=360, fs=fs)
     assert onset < 360 < offset
     width_s = (offset - onset) / fs
@@ -321,7 +329,7 @@ def test_qrs_bounds_bracket_the_r_peak():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py::test_qrs_bounds_bracket_the_r_peak -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py::test_qrs_bounds_bracket_the_r_peak -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_bounds'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -355,7 +363,7 @@ def qrs_bounds(signal, peak, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: PASS (3 passed)
 
 - [ ] **Step 5: Commit**
@@ -396,12 +404,17 @@ def _beat_with_p_wave(fs=360.0, n_beats=6, rr=0.8):
         r = int(b * rr * fs) + 100
         if r + 20 >= n:
             break
-        sig[r] = 3.0                       # R peak
-        sig[r - 1] = sig[r + 1] = 1.0
+        # Dense QRS ~70 ms wide: a real complex occupies every sample it spans,
+        # and a width measured from isolated spikes is not physiological.
+        half = int(0.035 * fs)
+        for off in range(-half, half + 1):
+            if 0 <= r + off < n:
+                sig[r + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
         p = r - int(0.16 * fs)             # P wave 160 ms before R
-        if p > 2:
-            sig[p] = 0.45
-            sig[p - 1] = sig[p + 1] = 0.25
+        pw = int(0.02 * fs)
+        if p - pw > 0:
+            for off in range(-pw, pw + 1):
+                sig[p + off] = 0.45 * (1.0 - abs(off) / (pw + 1.0))
     return sig
 
 
@@ -427,7 +440,7 @@ def test_pr_unavailable_when_no_p_wave():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'pr_interval'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -497,7 +510,7 @@ def pr_interval(signal, peaks=None, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (6 passed)
 
 - [ ] **Step 5: Commit**
@@ -558,7 +571,7 @@ def test_qt_returns_measurement_not_constant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_duration'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -648,7 +661,7 @@ def qt_interval(signal, peaks=None, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (10 passed)
 
 - [ ] **Step 5: Commit**
@@ -710,7 +723,7 @@ from ecg.delineate import detect_r_peaks
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'st_deviation'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -741,7 +754,8 @@ def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
         j = offset + int(ST_OFFSET_S * fs)
         if j >= len(sig):
             continue
-        deviations.append((sig[j] - baseline) / mm_per_mv)
+        # mm = mV x (mm per mV). Standard ECG gain is 10 mm/mV.
+        deviations.append((sig[j] - baseline) * mm_per_mv)
 
     if not deviations:
         return Measurement(None, UNAVAILABLE, "ST point beyond signal end")
@@ -758,7 +772,7 @@ def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (13 passed)
 
 - [ ] **Step 5: Commit**
@@ -807,7 +821,7 @@ def test_returns_none_for_blank_page():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.digitize'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -851,7 +865,7 @@ def detect_grid_scale(gray):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -898,6 +912,24 @@ def test_wide_grid_of_panels_detected_as_twelve_lead():
     assert detect_layout(img) == "twelve_lead"
 
 
+def test_panel_positions_map_to_correct_lead_names():
+    """Pin the physical sheet layout: a set-equality check cannot catch a
+    transposition, and Task 10 reads aVF from a specific panel."""
+    from ecg.digitize import LEAD_PANELS_3X4
+    assert LEAD_PANELS_3X4[0] == ["I", "aVR", "V1", "V4"]
+    assert LEAD_PANELS_3X4[1] == ["II", "aVL", "V2", "V5"]
+    assert LEAD_PANELS_3X4[2] == ["III", "aVF", "V3", "V6"]
+    # aVF drives the axis calculation; assert its position explicitly.
+    assert LEAD_PANELS_3X4[2][1] == "aVF"
+    assert LEAD_PANELS_3X4[0][0] == "I"
+
+
+def test_blank_panel_yields_no_signal():
+    """A traceless panel must report nothing, not a fabricated flat line."""
+    from ecg.digitize import _trace_row_band
+    assert _trace_row_band(np.zeros((100, 300))) is None
+
+
 def test_extract_leads_returns_named_signals(tmp_path):
     img = np.full((900, 1200), 255) .astype(np.uint8)
     for row in range(3):
@@ -912,7 +944,7 @@ def test_extract_leads_returns_named_signals(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: FAIL with `ImportError: cannot import name 'detect_layout'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -926,6 +958,17 @@ from scipy.signal import find_peaks as _find_peaks
 LEAD_NAMES_12 = ["I", "II", "III", "aVR", "aVL", "aVF",
                  "V1", "V2", "V3", "V4", "V5", "V6"]
 
+# Physical panel positions on a standard 3x4 printed sheet. The columns are
+# limb / augmented / precordial groups, so reading the sheet row-major gives
+# I, aVR, V1, V4 across the top row — NOT the clinical listing order above.
+# Task 10 reads leads I and aVF from here, so a transposed mapping would
+# silently yield a wrong axis in degrees with no visible error.
+LEAD_PANELS_3X4 = [
+    ["I",   "aVR", "V1", "V4"],
+    ["II",  "aVL", "V2", "V5"],
+    ["III", "aVF", "V3", "V6"],
+]
+
 
 def _trace_row_band(ink_band):
     """Column-wise centre of ink mass within one horizontal band."""
@@ -933,11 +976,17 @@ def _trace_row_band(ink_band):
     rows = np.arange(h, dtype=float)
     out = np.full(ink_band.shape[1], h / 2.0)
     thr = np.percentile(ink_band, 88)
+    found_any = False
     for x in range(ink_band.shape[1]):
         col = ink_band[:, x]
         m = col >= max(thr, 1.0)
         if m.sum() >= 1 and col[m].sum() > 1e-6:
             out[x] = float(np.average(rows[m], weights=col[m]))
+            found_any = True
+    if not found_any:
+        # No ink anywhere in this band: report nothing rather than a flat
+        # zero trace, which would read downstream as a real isoelectric lead.
+        return None
     sig = (h - 1.0) - out
     sig = sig - np.mean(sig)
     std = float(np.std(sig))
@@ -980,13 +1029,13 @@ def extract_leads(image_path):
         band = ink[r * h // 3:(r + 1) * h // 3, :]
         for c in range(4):
             col = band[:, c * w // 4:(c + 1) * w // 4]
-            leads[LEAD_NAMES_12[r * 4 + c]] = _trace_row_band(col)
+            leads[LEAD_PANELS_3X4[r][c]] = _trace_row_band(col)
     return {"leads": leads, "layout": layout, "px_per_mm": px_per_mm}
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: PASS (5 passed)
 
 - [ ] **Step 5: Commit**
@@ -1042,7 +1091,7 @@ def test_axis_near_ninety_when_aVF_dominant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_axis'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1072,6 +1121,10 @@ def qrs_axis(leads, fs=360.0):
     """
     if not isinstance(leads, dict) or "I" not in leads or "aVF" not in leads:
         return Measurement(None, UNAVAILABLE, "Requires 12-lead")
+    # A blank panel digitizes to None (see ecg.digitize._trace_row_band), so a
+    # sheet can carry the lead names without carrying usable traces.
+    if leads["I"] is None or leads["aVF"] is None:
+        return Measurement(None, UNAVAILABLE, "Lead I or aVF has no trace")
 
     net_i = _net_qrs_area(leads["I"], fs)
     net_avf = _net_qrs_area(leads["aVF"], fs)
@@ -1092,7 +1145,7 @@ def qrs_axis(leads, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (16 passed)
 
 - [ ] **Step 5: Commit**
@@ -1143,6 +1196,42 @@ def test_analyse_marks_axis_unavailable_for_single_lead():
     assert report["axis"].reason == "Requires 12-lead"
 
 
+def test_analyse_accepts_a_dict_of_leads():
+    sig = _beat_with_p_wave()
+    report = analyse({"I": sig, "aVF": np.zeros_like(sig), "II": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_skips_blank_leads_when_choosing_primary():
+    """A None-valued lead II must not crash or become the primary signal."""
+    sig = _beat_with_p_wave()
+    report = analyse({"II": None, "I": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_reports_all_unavailable_when_every_lead_is_blank():
+    report = analyse({"I": None, "II": None}, fs=360.0)
+    assert report["heart_rate"].value is None
+    assert report["display"]["heart_rate"] == "—"
+
+
+def test_st_unavailable_from_image_without_grid_scale():
+    """ST is in millimetres, so no paper scale means no honest ST value."""
+    report = analyse(_beat_with_p_wave(), fs=360.0,
+                     px_per_mm=None, from_image=True)
+    assert report["st_segment"].value is None
+    assert report["st_segment"].reason == "ECG grid not detected"
+
+
+def test_hrv_measurements_are_stored_in_seconds():
+    """Every Measurement in the report uses seconds; only display converts."""
+    report = analyse(_beat_with_p_wave(), fs=360.0)
+    if report["sdnn"].value is not None:
+        # ~0.0 s for a metronomic synthetic signal, but certainly sub-second.
+        assert report["sdnn"].value < 1.0
+        assert report["display"]["sdnn"].endswith("ms")
+
+
 def test_display_strings_use_dash_for_unavailable():
     report = analyse(np.zeros(500), fs=360.0)
     assert report["display"]["heart_rate"] == "—"
@@ -1150,7 +1239,7 @@ def test_display_strings_use_dash_for_unavailable():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'analyse'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1158,11 +1247,32 @@ Expected: FAIL with `ImportError: cannot import name 'analyse'`
 Append to `ecg/parameters.py`:
 
 ```python
+def _all_unavailable(reason):
+    """A complete report in which nothing could be measured.
+
+    Returned rather than raising, so a blank or unreadable image degrades to
+    honest dashes instead of a 500.
+    """
+    keys = ["heart_rate", "rhythm", "pr_interval", "qrs_duration",
+            "qt_interval", "qtc", "st_segment", "axis", "rr_interval",
+            "sdnn", "rmssd"]
+    report = {k: Measurement(None, UNAVAILABLE, reason) for k in keys}
+    report["display"] = {k: "—" for k in keys}
+    return report
+
+
 def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
     """Measure every displayed parameter, flagging what could not be measured."""
     if isinstance(signal_or_leads, dict):
         leads = signal_or_leads
-        primary = leads.get("II", next(iter(leads.values())))
+        # A blank panel digitizes to None, and dict.get() only substitutes its
+        # default when the KEY is missing - not when the value is None. Pick the
+        # first lead that actually carries a trace, preferring II.
+        primary = leads.get("II")
+        if primary is None:
+            primary = next((v for v in leads.values() if v is not None), None)
+        if primary is None:
+            return _all_unavailable("No lead carried a usable trace")
     else:
         leads = {"II": np.asarray(signal_or_leads, dtype=float).flatten()}
         primary = leads["II"]
@@ -1184,13 +1294,15 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
         st = st_deviation(primary, peaks, fs)
 
     if qt.value is not None and len(peaks) >= 2:
-        mean_rr = float(np.mean(_rr_seconds(peaks, fs)))
+        rr_s = _rr_seconds(peaks, fs)
+        mean_rr = float(np.mean(rr_s))
         qtc = Measurement(qtc_fridericia(qt.value, mean_rr), qt.quality)
         rr = Measurement(mean_rr, OK)
-        rr_s = _rr_seconds(peaks, fs)
-        sdnn = Measurement(float(np.std(rr_s, ddof=1)) * 1000.0, OK) \
+        # Stored in seconds like every other duration here; the display layer
+        # is the only place that converts to milliseconds.
+        sdnn = Measurement(float(np.std(rr_s, ddof=1)), OK) \
             if len(rr_s) >= 2 else Measurement(None, UNAVAILABLE, "Too few beats")
-        rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))) * 1000.0, OK) \
+        rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))), OK) \
             if len(rr_s) >= 3 else Measurement(None, UNAVAILABLE, "Too few beats")
     else:
         qtc = Measurement(None, UNAVAILABLE, "QT not measurable")
@@ -1221,15 +1333,19 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
         "axis": (f"{axis.value:+.0f}° ({axis.reason})"
                  if axis.value is not None else "—"),
         "rr_interval": rr.format("s", 3),
-        "sdnn": sdnn.format("ms"),
-        "rmssd": rmssd.format("ms"),
+        "sdnn": Measurement(
+            sdnn.value * 1000 if sdnn.value is not None else None,
+            sdnn.quality).format("ms"),
+        "rmssd": Measurement(
+            rmssd.value * 1000 if rmssd.value is not None else None,
+            rmssd.quality).format("ms"),
     }
     return report
 ```
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (20 passed)
 
 - [ ] **Step 5: Commit**
@@ -1279,12 +1395,12 @@ def test_render_then_digitize_preserves_signal_shape(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails or passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py::test_render_then_digitize_preserves_signal_shape -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py::test_render_then_digitize_preserves_signal_shape -v`
 Expected: This validates Task 9's tracer. If it FAILS, the tracer is wrong — fix `_trace_row_band` in `ecg/digitize.py` until it passes. Do not weaken the 0.95 threshold.
 
 - [ ] **Step 3: Run the whole suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all tests pass, including the pre-existing ones.
 
 - [ ] **Step 4: Commit**
@@ -1321,14 +1437,15 @@ def _post(client, path, extra):
     return client.post(path, data=data, content_type="multipart/form-data")
 
 
-def test_ecg_page_reports_new_parameters():
+def test_ecg_route_still_renders_successfully():
+    """Task 13 replaces the parameter source; the template labels for Rhythm,
+    ST Segment and QRS Axis arrive in Task 14, so they are asserted there."""
     flask_app.app.config["TESTING"] = True
     with flask_app.app.test_client() as client:
         resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
-        html = resp.get_data(as_text=True)
         assert resp.status_code == 200
-        for label in ["Rhythm", "ST Segment", "QRS Axis"]:
-            assert label in html, label
+        html = resp.get_data(as_text=True)
+        assert "ECG Waveform Parameters" in html
 
 
 def test_pr_is_no_longer_the_hardcoded_constant():
@@ -1341,7 +1458,7 @@ def test_pr_is_no_longer_the_hardcoded_constant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_route.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
 Expected: FAIL — `"Rhythm"` absent and `"145.0 ms"` still present.
 
 - [ ] **Step 3: Write the implementation**
@@ -1391,7 +1508,7 @@ Then replace the parameter entries in the `result` dict with:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_route.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -1467,7 +1584,26 @@ And add the matching hidden inputs in `templates/ecg.html` inside the report for
                     <input type="hidden" name="axis" value="{{ result.axis }}">
 ```
 
-- [ ] **Step 3: Verify end to end**
+- [ ] **Step 3: Assert the new labels render**
+
+Append to `tests/test_ecg_route.py`:
+
+```python
+def test_ecg_page_reports_new_parameters():
+    """The three parameters the app never computed before must now appear."""
+    flask_app.app.config["TESTING"] = True
+    with flask_app.app.test_client() as client:
+        resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
+        html = resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        for label in ["Rhythm", "ST Segment", "QRS Axis"]:
+            assert label in html, label
+```
+
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
+Expected: PASS (3 passed)
+
+- [ ] **Step 4: Verify end to end**
 
 ```bash
 .venv/bin/python app.py > /tmp/ecg_app.log 2>&1 &
@@ -1481,15 +1617,15 @@ curl -s -X POST http://127.0.0.1:5050/analyze_ecg \
 
 Expected: Rhythm, ST Segment and QRS Axis all render. PR shows a measured value or `—`, never `145.0 ms`.
 
-- [ ] **Step 4: Run the full suite**
+- [ ] **Step 5: Run the full suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add templates/ecg.html app.py
+git add templates/ecg.html app.py tests/test_ecg_route.py
 git commit -m "feat: display Rhythm, ST segment and QRS axis on ECG page and report"
 ```
 
@@ -1567,7 +1703,7 @@ def test_mean_sensitivity_across_records():
 
 - [ ] **Step 2: Run the test**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate_mitbih.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate_mitbih.py -v`
 Expected: This measures the Task 2 detector on real data. If sensitivity falls
 below threshold, fix `detect_r_peaks` — typically by band-pass filtering
 5-15 Hz before peak-finding to suppress baseline wander and T waves:
@@ -1599,7 +1735,7 @@ tests/test_ecg_delineate_mitbih.py for the gate.
 
 - [ ] **Step 4: Run the full suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
