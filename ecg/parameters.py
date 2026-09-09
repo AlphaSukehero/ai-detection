@@ -192,3 +192,93 @@ def qrs_axis(leads, fs=360.0):
     else:
         label = "Extreme axis"
     return Measurement(degrees, OK, label)
+
+
+def _all_unavailable(reason):
+    """A complete report in which nothing could be measured.
+
+    Returned rather than raising, so a blank or unreadable image degrades to
+    honest dashes instead of a 500.
+    """
+    keys = ["heart_rate", "rhythm", "pr_interval", "qrs_duration",
+            "qt_interval", "qtc", "st_segment", "axis", "rr_interval",
+            "sdnn", "rmssd"]
+    report = {k: Measurement(None, UNAVAILABLE, reason) for k in keys}
+    report["display"] = {k: "—" for k in keys}
+    return report
+
+
+def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
+    """Measure every displayed parameter, flagging what could not be measured."""
+    if isinstance(signal_or_leads, dict):
+        leads = signal_or_leads
+        # A blank panel digitizes to None, and dict.get() only substitutes its
+        # default when the KEY is missing - not when the value is None. Pick the
+        # first lead that actually carries a trace, preferring II.
+        primary = leads.get("II")
+        if primary is None:
+            primary = next((v for v in leads.values() if v is not None), None)
+        if primary is None:
+            return _all_unavailable("No lead carried a usable trace")
+    else:
+        leads = {"II": np.asarray(signal_or_leads, dtype=float).flatten()}
+        primary = leads["II"]
+
+    peaks = detect_r_peaks(primary, fs)
+    hr = heart_rate(peaks, fs)
+    rhy = rhythm(peaks, fs)
+    pr = pr_interval(primary, peaks, fs)
+    qrs = qrs_duration(primary, peaks, fs)
+    qt = qt_interval(primary, peaks, fs)
+    axis = qrs_axis(leads, fs)
+
+    # ST is the one parameter expressed in millimetres, so it needs the paper
+    # scale. from_image=True with no detected grid means we cannot honestly
+    # convert amplitude to mm.
+    if from_image and px_per_mm is None:
+        st = Measurement(None, UNAVAILABLE, "ECG grid not detected")
+    else:
+        st = st_deviation(primary, peaks, fs)
+
+    if qt.value is not None and len(peaks) >= 2:
+        mean_rr = float(np.mean(_rr_seconds(peaks, fs)))
+        qtc = Measurement(qtc_fridericia(qt.value, mean_rr), qt.quality)
+        rr = Measurement(mean_rr, OK)
+        rr_s = _rr_seconds(peaks, fs)
+        sdnn = Measurement(float(np.std(rr_s, ddof=1)) * 1000.0, OK) \
+            if len(rr_s) >= 2 else Measurement(None, UNAVAILABLE, "Too few beats")
+        rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))) * 1000.0, OK) \
+            if len(rr_s) >= 3 else Measurement(None, UNAVAILABLE, "Too few beats")
+    else:
+        qtc = Measurement(None, UNAVAILABLE, "QT not measurable")
+        rr = Measurement(None, UNAVAILABLE, "Fewer than 2 R-peaks detected")
+        sdnn = Measurement(None, UNAVAILABLE, "Too few beats")
+        rmssd = Measurement(None, UNAVAILABLE, "Too few beats")
+
+    report = {
+        "heart_rate": hr, "rhythm": rhy, "pr_interval": pr,
+        "qrs_duration": qrs, "qt_interval": qt, "qtc": qtc,
+        "st_segment": st, "axis": axis, "rr_interval": rr,
+        "sdnn": sdnn, "rmssd": rmssd,
+    }
+    report["display"] = {
+        "heart_rate": hr.format("bpm"),
+        "rhythm": rhy.reason if rhy.value is not None else "—",
+        "pr_interval": Measurement(
+            pr.value * 1000 if pr.value is not None else None, pr.quality).format("ms", 0),
+        "qrs_duration": Measurement(
+            qrs.value * 1000 if qrs.value is not None else None, qrs.quality).format("ms", 0),
+        "qt_interval": Measurement(
+            qt.value * 1000 if qt.value is not None else None, qt.quality).format("ms", 0),
+        "qtc": Measurement(
+            qtc.value * 1000 if qtc.value is not None else None, qtc.quality).format("ms", 0)
+            + (" (Fridericia)" if qtc.value is not None else ""),
+        "st_segment": (f"{st.reason} ({st.value:+.1f} mm)"
+                       if st.value is not None else "—"),
+        "axis": (f"{axis.value:+.0f}° ({axis.reason})"
+                 if axis.value is not None else "—"),
+        "rr_interval": rr.format("s", 3),
+        "sdnn": sdnn.format("ms"),
+        "rmssd": rmssd.format("ms"),
+    }
+    return report

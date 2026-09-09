@@ -152,3 +152,59 @@ def test_axis_near_ninety_when_aVF_dominant():
     m = qrs_axis({"I": flat, "aVF": sig}, fs=360.0)
     assert m.value is not None
     assert abs(m.value - 90.0) < 20.0
+
+
+from ecg.parameters import analyse
+
+
+def test_analyse_returns_every_expected_parameter():
+    report = analyse(_beat_with_p_wave(), fs=360.0)
+    for key in ["heart_rate", "rhythm", "pr_interval", "qrs_duration",
+                "qt_interval", "qtc", "st_segment", "axis"]:
+        assert key in report, key
+
+
+def test_analyse_never_emits_the_old_hardcoded_values():
+    """Guards the two fabricated constants this work removes."""
+    report = analyse(_beat_with_p_wave(), fs=360.0)
+    pr = report["pr_interval"]
+    qt = report["qt_interval"]
+    assert not (pr.value is not None and abs(pr.value - 0.145) < 1e-9)
+    assert not (qt.value is not None and abs(qt.value - 0.400) < 1e-9)
+
+
+def test_analyse_marks_axis_unavailable_for_single_lead():
+    report = analyse(_beat_with_p_wave(), fs=360.0)
+    assert report["axis"].reason == "Requires 12-lead"
+
+
+def test_analyse_accepts_a_dict_of_leads():
+    sig = _beat_with_p_wave()
+    report = analyse({"I": sig, "aVF": np.zeros_like(sig), "II": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_skips_blank_leads_when_choosing_primary():
+    """A None-valued lead II must not crash or become the primary signal."""
+    sig = _beat_with_p_wave()
+    report = analyse({"II": None, "I": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_reports_all_unavailable_when_every_lead_is_blank():
+    report = analyse({"I": None, "II": None}, fs=360.0)
+    assert report["heart_rate"].value is None
+    assert report["display"]["heart_rate"] == "—"
+
+
+def test_st_unavailable_from_image_without_grid_scale():
+    """ST is in millimetres, so no paper scale means no honest ST value."""
+    report = analyse(_beat_with_p_wave(), fs=360.0,
+                     px_per_mm=None, from_image=True)
+    assert report["st_segment"].value is None
+    assert report["st_segment"].reason == "ECG grid not detected"
+
+
+def test_display_strings_use_dash_for_unavailable():
+    report = analyse(np.zeros(500), fs=360.0)
+    assert report["display"]["heart_rate"] == "—"
