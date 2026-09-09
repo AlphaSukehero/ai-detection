@@ -53,7 +53,15 @@ LEAD_PANELS_3X4 = [
 
 
 def _trace_row_band(ink_band):
-    """Column-wise centre of ink mass within one horizontal band."""
+    """Column-wise centre of ink mass within one horizontal band.
+
+    Returns the mean-centred deflection in PIXEL units. It must NOT be scaled
+    by the band's own standard deviation: doing so gives every lead its own
+    private gain, which makes millimetre amplitudes (ST) meaningless and
+    destroys the lead-to-lead amplitude ratio the QRS axis is computed from.
+    Callers that need a normalised trace (detect_r_peaks, qrs_bounds) already
+    call ecg.delineate._normalise themselves.
+    """
     h = ink_band.shape[0]
     rows = np.arange(h, dtype=float)
     out = np.full(ink_band.shape[1], h / 2.0)
@@ -70,9 +78,7 @@ def _trace_row_band(ink_band):
         # zero trace, which would read downstream as a real isoelectric lead.
         return None
     sig = (h - 1.0) - out
-    sig = sig - np.mean(sig)
-    std = float(np.std(sig))
-    return sig / std if std > 1e-9 else sig
+    return sig - np.mean(sig)
 
 
 def detect_layout(gray):

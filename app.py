@@ -43,7 +43,7 @@ except Exception as e:
     TF_AVAILABLE = False
 
 from mlkit.registry import RegistryError, load_card, validate_card
-from ecg.parameters import analyse as analyse_ecg_parameters
+from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
 from ecg.digitize import extract_leads
 
 # Optional DICOM support
@@ -624,59 +624,6 @@ def load_image_rgb(image_path):
         raise ValueError(f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}")
 
 
-def extract_ecg_signal_from_image(image_path):
-    """Digitize an ECG strip image into a 1D signal usable by the QCNN pipeline.
-
-    The trace (dark line) is isolated by thresholding the inverted grayscale
-    image; per column the vertical center-of-mass is tracked and inverted so
-    upward deflections become positive peaks.
-    """
-    img = Image.open(image_path).convert("L")
-    target_w = 1400
-    target_h = max(200, int(round(img.height * target_w / max(1, img.width))))
-    img = img.resize((target_w, target_h))
-    arr = np.asarray(img, dtype=np.float32)
-
-    inv = 255.0 - arr
-    thr = float(np.percentile(inv, 88))
-    if thr <= 0:
-        # A mostly-white strip makes the percentile 0, which would select every
-        # pixel; fall back to any ink that is darker than the page.
-        thr = max(1.0, float(inv.max()) * 0.5)
-    mask = inv >= thr
-
-    rows = np.arange(arr.shape[0], dtype=float)
-    y_center = np.full(arr.shape[1], arr.shape[0] / 2.0, dtype=float)
-
-    for x in range(arr.shape[1]):
-        m = mask[:, x]
-        # np.average raises when every weight is zero (a column with no trace),
-        # so require a non-zero weight sum before using it.
-        if m.sum() >= 1:
-            weights = inv[m, x]
-            total = float(weights.sum())
-            if total > 1e-6:
-                y_center[x] = float(np.average(rows[m], weights=weights))
-            else:
-                y_center[x] = float(np.mean(rows[m]))
-
-    signal = (arr.shape[0] - 1.0 - y_center)
-    signal = signal - np.mean(signal)
-    std = float(np.std(signal))
-    if std > 1e-6:
-        signal = signal / std
-
-    # Resample to a clean multiple of the 280-sample window
-    n_windows = max(1, int(round(len(signal) / 280)))
-    target_len = n_windows * 280
-    if len(signal) != target_len:
-        x_old = np.arange(len(signal))
-        x_new = np.linspace(0, len(signal) - 1, target_len)
-        signal = np.interp(x_new, x_old, signal)
-
-    return signal.reshape(-1, 280)
-
-
 # ============================================================
 # BRAIN TUMOR MRI PREDICTION LOGIC
 # ============================================================
@@ -1221,6 +1168,32 @@ def sample_file(filename):
 # ANALYZE ECG
 # ------------------------------------------------------------
 
+ECG_QUALITY_PARAMS = ("heart_rate", "rhythm", "pr_interval", "qrs_duration",
+                      "qt_interval", "qtc", "st_segment", "axis")
+
+
+def _signal_quality(report):
+    """Summarise how much of the ECG was actually measurable.
+
+    Derived from the per-parameter quality flags across the 8 clinical
+    parameters, not from the presence of a heart rate alone - a strip whose
+    PR, QT, ST and axis are all unavailable is not "Good".
+
+    Cut-offs: "Good" needs at least 6 of 8 parameters measured with none of
+    them low-confidence downgrading the majority (>= 6 OK); "Partial" needs
+    at least 3 measured at any confidence; below that, "Insufficient data".
+    """
+    from ecg.quality import OK, UNAVAILABLE
+    flags = [report[k].quality for k in ECG_QUALITY_PARAMS if k in report]
+    n_ok = sum(1 for f in flags if f == OK)
+    n_measured = sum(1 for f in flags if f != UNAVAILABLE)
+    if n_ok >= 6:
+        return "Good"
+    if n_measured >= 3:
+        return "Partial"
+    return "Insufficient data"
+
+
 @app.route("/analyze_ecg", methods=["POST"])
 def analyze_ecg():
     file = request.files.get("ecg_file")
@@ -1261,8 +1234,14 @@ def analyze_ecg():
             leads = digitized["leads"]
             ecg_values = leads.get("II", next(iter(leads.values())))
             X = prepare_qcnn_input(ecg_values)
-            report = analyse_ecg_parameters(leads, fs=360.0,
-                                            px_per_mm=digitized["px_per_mm"],
+            # A digitized trace has one sample per pixel COLUMN, so its true
+            # sampling rate is set by the paper speed: 25 mm/s x px/mm. It is
+            # NOT the 360 Hz of the MIT-BIH CSV path. With no grid there is no
+            # timebase at all; analyse() then reports everything unavailable.
+            px_per_mm = digitized["px_per_mm"]
+            image_fs = fs_from_scale(px_per_mm) if px_per_mm is not None else 360.0
+            report = analyse_ecg_parameters(leads, fs=image_fs,
+                                            px_per_mm=px_per_mm,
                                             from_image=True)
             input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
         else:
@@ -1306,7 +1285,7 @@ def analyze_ecg():
             "rhythm": report["display"]["rhythm"],
             "st_segment": report["display"]["st_segment"],
             "axis": report["display"]["axis"],
-            "signal_quality": "Good" if report["heart_rate"].value else "Insufficient data",
+            "signal_quality": _signal_quality(report),
             "interpretation": interpretation,
             "recommendation": recommendation,
             "waveform": plot_filename,
@@ -1705,14 +1684,14 @@ def download_ecg_report():
         ]),
         ("table", "2. ECG Waveform Parameters", [
             ("Measurement", "Value"),
-            ("Heart Rate", form.get("heart_rate", "—")),
-            ("RR Interval", form.get("rr_interval", "—")),
-            ("QRS Duration", form.get("qrs_duration", "—")),
-            ("PR Interval", form.get("pr_interval", "—")),
-            ("QT Interval", form.get("qt_interval", "—")),
-            ("QTc (Corrected)", form.get("qtc", "—")),
-            ("HRV SDNN", form.get("sdnn", "—")),
-            ("HRV RMSSD", form.get("rmssd", "—")),
+            ("Heart Rate", _pdf_value(form.get("heart_rate"))),
+            ("RR Interval", _pdf_value(form.get("rr_interval"))),
+            ("QRS Duration", _pdf_value(form.get("qrs_duration"))),
+            ("PR Interval", _pdf_value(form.get("pr_interval"))),
+            ("QT Interval", _pdf_value(form.get("qt_interval"))),
+            ("QTc (Corrected)", _pdf_value(form.get("qtc"))),
+            ("HRV SDNN", _pdf_value(form.get("sdnn"))),
+            ("HRV RMSSD", _pdf_value(form.get("rmssd"))),
             ("Rhythm", _pdf_value(form.get("rhythm"))),
             ("ST Segment", _pdf_value(form.get("st_segment"))),
             ("QRS Axis", _pdf_value(form.get("axis"))),

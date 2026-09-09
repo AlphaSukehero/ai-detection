@@ -76,8 +76,10 @@ def p_onset(signal, qrs_onset, fs=360.0):
     best = peaks[int(np.argmax(props["prominences"]))]
     # Walk back to where the P wave leaves baseline.
     idx = best
-    thresh = 0.3 * window[best]
-    while idx > 0 and window[idx] > thresh:
+    # Absolute value: an inverted P wave has a negative apex, and a negative
+    # threshold would never stop the backward walk before the window start.
+    thresh = 0.3 * abs(window[best])
+    while idx > 0 and abs(window[idx]) > thresh:
         idx -= 1
     return int(lo + idx)
 
@@ -107,4 +109,11 @@ def t_end(signal, qrs_offset, rr_s, fs=360.0):
         return None
     idx = apex + steep
     offset = int(window[idx] / (-slope))
-    return int(start + min(len(window) - 1, idx + max(0, offset)))
+    end = idx + max(0, offset)
+    if end > len(window) - 1:
+        # A near-flat T wave makes the tangent extrapolation run past the
+        # search window. Clamping it to the window edge would return a
+        # fabricated T-end that often lands inside the QT plausibility band
+        # and is then reported as a measured, OK-quality QT. Reject instead.
+        return None
+    return int(start + end)

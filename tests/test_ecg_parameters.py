@@ -92,13 +92,39 @@ def test_qrs_duration_in_physiological_range():
     sig = _beat_with_p_wave()
     m = qrs_duration(sig, None, fs=360.0)
     assert m.value is not None
-    assert 0.02 <= m.value <= 0.20
+    # The fixture builds a QRS 2*0.035 s wide; a bound of 0.02-0.20 s would
+    # be satisfied by anything the plausibility filter already lets through,
+    # so assert the fixture's known width instead.
+    assert abs(m.value - 0.070) < 0.015, m.value
+
+
+def _beat_with_t_wave(fs=360.0, n_beats=6, rr=0.8, t_amp=0.8):
+    """_beat_with_p_wave plus a real T wave, so QT is genuinely measurable.
+
+    The P-wave fixture has no T wave at all: any QT it yielded came from the
+    tangent extrapolation being clamped to the search-window edge, which is
+    the fabrication ecg.delineate.t_end now rejects.
+    """
+    sig = _beat_with_p_wave(fs=fs, n_beats=n_beats, rr=rr)
+    half = int(0.06 * fs)                        # T wave 120 ms wide
+    for b in range(n_beats):
+        r = int(b * rr * fs) + 100
+        centre = r + int(0.24 * fs)              # T apex ~240 ms after R
+        for off in range(-half, half + 1):
+            i = centre + off
+            if 0 <= i < len(sig):
+                sig[i] += t_amp * np.cos(0.5 * np.pi * off / half) ** 2
+    return sig
 
 
 def test_qt_returns_measurement_not_constant():
-    sig = _beat_with_p_wave()
+    sig = _beat_with_t_wave()
     m = qt_interval(sig, None, fs=360.0)
-    assert m.value is None or m.value != 0.40
+    # "None or != 0.40" would pass when QT is unmeasurable - exactly the
+    # failure this test exists to catch. Require a real measurement.
+    assert m.value is not None
+    assert m.value != 0.40
+    assert 0.20 <= m.value <= 0.65
 
 
 from ecg.delineate import detect_r_peaks
@@ -108,7 +134,9 @@ from ecg.parameters import st_deviation
 def test_st_normal_for_flat_baseline():
     sig = _beat_with_p_wave()
     m = st_deviation(sig, None, fs=360.0)
-    assert m.reason in {"Normal", "Elevated", "Depressed"}
+    assert m.value is not None
+    assert m.reason == "Normal", f"{m.reason} ({m.value:+.2f} mm)"
+    assert abs(m.value) <= 1.0
 
 
 def test_st_elevation_detected_when_segment_raised():
@@ -197,23 +225,76 @@ def test_analyse_reports_all_unavailable_when_every_lead_is_blank():
     assert report["display"]["heart_rate"] == "—"
 
 
-def test_st_unavailable_from_image_without_grid_scale():
-    """ST is in millimetres, so no paper scale means no honest ST value."""
+def test_everything_unavailable_from_image_without_grid_scale():
+    """No grid means no timebase and no gain, so NOTHING is measurable.
+
+    ST is in millimetres and every interval is in seconds; both derive from
+    the paper scale, so an ungridded image cannot yield either.
+    """
     report = analyse(_beat_with_p_wave(), fs=360.0,
                      px_per_mm=None, from_image=True)
-    assert report["st_segment"].value is None
-    assert report["st_segment"].reason == "ECG grid not detected"
+    for key in ("heart_rate", "rhythm", "pr_interval", "qrs_duration",
+                "qt_interval", "qtc", "st_segment", "axis", "rr_interval",
+                "sdnn", "rmssd"):
+        assert report[key].value is None, key
+        assert report[key].quality == UNAVAILABLE, key
+        assert report[key].reason == "ECG grid not detected - no timebase"
+        assert report["display"][key] == "—", key
 
 
 def test_hrv_measurements_are_stored_in_seconds():
     """Every Measurement in the report uses seconds; only display converts."""
     report = analyse(_beat_with_p_wave(), fs=360.0)
-    if report["sdnn"].value is not None:
-        # ~0.0 s for a metronomic synthetic signal, but certainly sub-second.
-        assert report["sdnn"].value < 1.0
-        assert report["display"]["sdnn"].endswith("ms")
+    # Guarding on "is not None" would let the assertions vanish silently.
+    assert report["sdnn"].value is not None
+    # ~0.0 s for a metronomic synthetic signal, but certainly sub-second.
+    assert report["sdnn"].value < 1.0
+    assert report["display"]["sdnn"].endswith("ms")
 
 
 def test_display_strings_use_dash_for_unavailable():
     report = analyse(np.zeros(500), fs=360.0)
     assert report["display"]["heart_rate"] == "—"
+
+
+from ecg.digitize import _trace_row_band
+
+
+def _ink_band(signal, h=140, amp_px=1.0, thickness=3):
+    """Render a 1-D signal as an ink band, the way digitize sees a printed lead."""
+    band = np.zeros((h, len(signal)))
+    mid = h // 2
+    for x, v in enumerate(signal):
+        y = int(round(mid - v * amp_px))
+        for t in range(thickness):
+            yy = y + t - thickness // 2
+            if 0 <= yy < h:
+                band[yy, x] = 255.0
+    return band
+
+
+def test_axis_angle_reflects_lead_amplitude_ratio():
+    """Digitized leads must share one gain, or the axis degrees are noise.
+
+    Per-lead standard-deviation normalisation (the old _trace_row_band) throws
+    away exactly the lead I : aVF amplitude ratio that arctan2 encodes, so it
+    reports +45 degrees for ANY pair of same-shaped leads. Two ratios are
+    checked so a single lucky value cannot pass.
+    """
+    beat = _beat_with_p_wave() / 3.0            # peak amplitude 1.0
+
+    # Equal amplitudes -> +45 degrees.
+    equal = {"I": _trace_row_band(_ink_band(beat, amp_px=30)),
+             "aVF": _trace_row_band(_ink_band(beat, amp_px=30))}
+    m = qrs_axis(equal, fs=360.0)
+    assert m.value is not None
+    assert abs(m.value - 45.0) < 5.0, m.value
+
+    # aVF at half the amplitude of I -> arctan(0.5) = +26.6 degrees. This is
+    # the assertion the per-lead-normalised digitizer cannot satisfy: it
+    # returns +45 here too.
+    ratio = {"I": _trace_row_band(_ink_band(beat, amp_px=30)),
+             "aVF": _trace_row_band(_ink_band(beat, amp_px=15))}
+    m = qrs_axis(ratio, fs=360.0)
+    assert m.value is not None
+    assert abs(m.value - 26.57) < 6.0, m.value

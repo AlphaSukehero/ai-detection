@@ -45,3 +45,24 @@ def test_qrs_bounds_bracket_the_r_peak():
     assert onset < 360 < offset
     width_s = (offset - onset) / fs
     assert 0.03 <= width_s <= 0.20
+
+
+from ecg.delineate import t_end
+
+
+def test_t_end_rejects_near_flat_t_wave():
+    """A near-zero descent slope must yield None, not a window-edge clamp.
+
+    Extrapolating a tangent with a tiny slope puts T-end far past the search
+    window. Clamping to the window edge returns a fabricated index that, at
+    360 Hz, lands squarely inside the 0.20-0.65 s QT plausibility band and is
+    then reported as a measured, OK-quality QT.
+    """
+    fs = 360.0
+    n = 720
+    sig = np.zeros(n)
+    qrs_offset = 100
+    # A very broad, very shallow bump: apex early, descent almost flat.
+    for i in range(qrs_offset + 20, n):
+        sig[i] = 0.02 * np.exp(-((i - (qrs_offset + 40)) ** 2) / (2 * 400.0 ** 2))
+    assert t_end(sig, qrs_offset, rr_s=1.0, fs=fs) is None

@@ -194,6 +194,15 @@ def qrs_axis(leads, fs=360.0):
     return Measurement(degrees, OK, label)
 
 
+PAPER_SPEED_MM_S = 25.0      # standard ECG paper speed
+MM_PER_MV = 10.0             # standard ECG gain
+
+
+def fs_from_scale(px_per_mm):
+    """Sampling rate of a digitized strip: one sample per pixel column."""
+    return px_per_mm * PAPER_SPEED_MM_S
+
+
 def _all_unavailable(reason):
     """A complete report in which nothing could be measured.
 
@@ -209,7 +218,22 @@ def _all_unavailable(reason):
 
 
 def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
-    """Measure every displayed parameter, flagging what could not be measured."""
+    """Measure every displayed parameter, flagging what could not be measured.
+
+    On the image path the timebase comes from the printed grid: a digitized
+    trace carries one sample per pixel COLUMN, so fs is px_per_mm * 25 mm/s.
+    With no detected grid there is no timebase and no gain, so NOTHING is
+    measurable - enforced here rather than at the call site so no caller can
+    bypass it by passing a guessed fs.
+    """
+    if from_image and px_per_mm is None:
+        return _all_unavailable("ECG grid not detected - no timebase")
+    if from_image:
+        # One sample per pixel column at 25 mm/s paper speed. Derived here,
+        # not taken from the caller: an fs argument left at the MIT-BIH 360 Hz
+        # would scale every interval by a constant with no visible error.
+        fs = px_per_mm * PAPER_SPEED_MM_S
+
     if isinstance(signal_or_leads, dict):
         leads = signal_or_leads
         # A blank panel digitizes to None, and dict.get() only substitutes its
@@ -224,6 +248,17 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
         leads = {"II": np.asarray(signal_or_leads, dtype=float).flatten()}
         primary = leads["II"]
 
+    if from_image:
+        # ecg.digitize returns pixel deflections. Standard ECG gain is
+        # 10 mm/mV, so mV = pixels / (px_per_mm * 10). Every lead shares this
+        # one gain, which is what makes the ST millimetres and the lead I /
+        # aVF ratio behind the QRS axis physically meaningful.
+        px_per_mv = px_per_mm * MM_PER_MV
+        leads = {k: (None if v is None
+                     else np.asarray(v, dtype=float).flatten() / px_per_mv)
+                 for k, v in leads.items()}
+        primary = np.asarray(primary, dtype=float).flatten() / px_per_mv
+
     peaks = detect_r_peaks(primary, fs)
     hr = heart_rate(peaks, fs)
     rhy = rhythm(peaks, fs)
@@ -232,18 +267,16 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
     qt = qt_interval(primary, peaks, fs)
     axis = qrs_axis(leads, fs)
 
-    # ST is the one parameter expressed in millimetres, so it needs the paper
-    # scale. from_image=True with no detected grid means we cannot honestly
-    # convert amplitude to mm.
-    if from_image and px_per_mm is None:
-        st = Measurement(None, UNAVAILABLE, "ECG grid not detected")
-    else:
-        st = st_deviation(primary, peaks, fs)
+    # ST is expressed in millimetres, so it needs the paper scale. On the
+    # image path the signal is already in mV (converted above); an ungridded
+    # image never reaches here at all.
+    st = st_deviation(primary, peaks, fs)
 
-    if qt.value is not None and len(peaks) >= 2:
+    # RR and the HRV statistics come from the R-peaks alone. Only QTc depends
+    # on QT, so an unresolvable T wave must not suppress them.
+    if len(peaks) >= 2:
         rr_s = _rr_seconds(peaks, fs)
         mean_rr = float(np.mean(rr_s))
-        qtc = Measurement(qtc_fridericia(qt.value, mean_rr), qt.quality)
         rr = Measurement(mean_rr, OK)
         # Stored in seconds like every other duration here; the display layer
         # is the only place that converts to milliseconds.
@@ -251,6 +284,9 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
             if len(rr_s) >= 2 else Measurement(None, UNAVAILABLE, "Too few beats")
         rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))), OK) \
             if len(rr_s) >= 3 else Measurement(None, UNAVAILABLE, "Too few beats")
+        qtc = Measurement(qtc_fridericia(qt.value, mean_rr), qt.quality) \
+            if qt.value is not None \
+            else Measurement(None, UNAVAILABLE, "QT not measurable")
     else:
         qtc = Measurement(None, UNAVAILABLE, "QT not measurable")
         rr = Measurement(None, UNAVAILABLE, "Fewer than 2 R-peaks detected")

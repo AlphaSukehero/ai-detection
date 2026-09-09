@@ -219,7 +219,7 @@
                     </div>
                     <div class="metric-box">
                         <div class="metric-label">QRS Axis</div>
-                        <div class="metric-value" style="font-size: 16px; color: #a78bfa;">{{ result.axis }}</div>
+                        <div class="metric-value" style="font-size: 16px; color: {% if result.axis == '—' %}var(--text-muted){% else %}#a78bfa{% endif %};">{{ result.axis }}</div>
                     </div>
                 </div>
 

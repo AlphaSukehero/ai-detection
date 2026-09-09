@@ -38,3 +38,36 @@ def test_ecg_page_reports_new_parameters():
         assert resp.status_code == 200
         for label in ["Rhythm", "ST Segment", "QRS Axis"]:
             assert label in html, label
+
+
+from app import _signal_quality
+from ecg.quality import Measurement, OK, LOW, UNAVAILABLE
+
+
+def _report(**flags):
+    keys = ["heart_rate", "rhythm", "pr_interval", "qrs_duration",
+            "qt_interval", "qtc", "st_segment", "axis"]
+    return {k: Measurement(None if flags.get(k, UNAVAILABLE) == UNAVAILABLE
+                           else 1.0, flags.get(k, UNAVAILABLE))
+            for k in keys}
+
+
+def test_signal_quality_good_needs_most_parameters_measured():
+    assert _signal_quality(_report(**{k: OK for k in [
+        "heart_rate", "rhythm", "pr_interval", "qrs_duration",
+        "qt_interval", "qtc"]})) == "Good"
+
+
+def test_signal_quality_not_good_when_only_the_rate_is_known():
+    """A heart rate alone used to report "Good" while everything else was —."""
+    assert _signal_quality(_report(heart_rate=OK)) != "Good"
+    assert _signal_quality(_report(heart_rate=OK)) == "Insufficient data"
+
+
+def test_signal_quality_partial_for_a_middling_report():
+    assert _signal_quality(_report(heart_rate=OK, rhythm=OK,
+                                   qrs_duration=LOW)) == "Partial"
+
+
+def test_signal_quality_insufficient_when_nothing_measured():
+    assert _signal_quality(_report()) == "Insufficient data"
