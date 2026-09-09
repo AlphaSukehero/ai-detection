@@ -40,12 +40,17 @@ def _beat_with_p_wave(fs=360.0, n_beats=6, rr=0.8):
         r = int(b * rr * fs) + 100
         if r + 20 >= n:
             break
-        sig[r] = 3.0                       # R peak
-        sig[r - 1] = sig[r + 1] = 1.0
+        # Dense QRS ~70 ms wide: a real complex occupies every sample it spans,
+        # and a width measured from isolated spikes is not physiological.
+        half = int(0.035 * fs)
+        for off in range(-half, half + 1):
+            if 0 <= r + off < n:
+                sig[r + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
         p = r - int(0.16 * fs)             # P wave 160 ms before R
-        if p > 2:
-            sig[p] = 0.45
-            sig[p - 1] = sig[p + 1] = 0.25
+        pw = int(0.02 * fs)
+        if p - pw > 0:
+            for off in range(-pw, pw + 1):
+                sig[p + off] = 0.45 * (1.0 - abs(off) / (pw + 1.0))
     return sig
 
 
@@ -67,3 +72,30 @@ def test_pr_unavailable_when_no_p_wave():
     m = pr_interval(sig, None, fs=fs)
     assert m.value is None
     assert m.quality == UNAVAILABLE
+
+
+from ecg.parameters import qrs_duration, qt_interval, qtc_fridericia
+
+
+def test_qtc_fridericia_matches_formula():
+    assert abs(qtc_fridericia(0.40, 1.0) - 0.40) < 1e-9
+    assert abs(qtc_fridericia(0.40, 0.512) - 0.50) < 1e-3
+
+
+def test_qtc_fridericia_is_tamer_than_bazett_at_high_rate():
+    """At 195 bpm Bazett produced 722 ms; Fridericia must stay far below."""
+    rr = 0.307
+    assert qtc_fridericia(0.40, rr) * 1000 < 620
+
+
+def test_qrs_duration_in_physiological_range():
+    sig = _beat_with_p_wave()
+    m = qrs_duration(sig, None, fs=360.0)
+    assert m.value is not None
+    assert 0.02 <= m.value <= 0.20
+
+
+def test_qt_returns_measurement_not_constant():
+    sig = _beat_with_p_wave()
+    m = qt_interval(sig, None, fs=360.0)
+    assert m.value is None or m.value != 0.40

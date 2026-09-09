@@ -74,3 +74,31 @@ def p_onset(signal, qrs_onset, fs=360.0):
     while idx > 0 and window[idx] > thresh:
         idx -= 1
     return int(lo + idx)
+
+
+def t_end(signal, qrs_offset, rr_s, fs=360.0):
+    """End of the T wave by the tangent method.
+
+    The search window scales with RR because the T wave moves closer to the
+    QRS as heart rate rises.
+    """
+    sig = _normalise(signal)
+    start = qrs_offset + int(0.04 * fs)
+    stop = min(len(sig) - 1, qrs_offset + int(min(0.60, 0.6 * rr_s) * fs))
+    if stop - start < 5:
+        return None
+    window = sig[start:stop]
+    apex = int(np.argmax(np.abs(window)))
+    if apex >= len(window) - 2:
+        return None
+    # Steepest descent after the apex, extrapolated to baseline.
+    slopes = np.diff(window[apex:])
+    if len(slopes) == 0:
+        return None
+    steep = int(np.argmin(slopes))
+    slope = slopes[steep]
+    if slope >= -1e-6:
+        return None
+    idx = apex + steep
+    offset = int(window[idx] / (-slope))
+    return int(start + min(len(window) - 1, idx + max(0, offset)))

@@ -60,3 +60,52 @@ def pr_interval(signal, peaks=None, fs=360.0):
         return Measurement(None, UNAVAILABLE, "P wave not detectable")
     quality = OK if len(values) >= max(1, len(peaks) // 2) else LOW
     return Measurement(float(np.median(values)), quality)
+
+
+from ecg.delineate import t_end
+
+QRS_PLAUSIBLE_S = (0.03, 0.20)
+QT_PLAUSIBLE_S = (0.20, 0.65)
+
+
+def qrs_duration(signal, peaks=None, fs=360.0):
+    if peaks is None:
+        peaks = detect_r_peaks(signal, fs)
+    values = []
+    for peak in peaks:
+        onset, offset = qrs_bounds(signal, int(peak), fs)
+        width = (offset - onset) / fs
+        if QRS_PLAUSIBLE_S[0] <= width <= QRS_PLAUSIBLE_S[1]:
+            values.append(width)
+    if not values:
+        return Measurement(None, UNAVAILABLE, "QRS boundaries not resolvable")
+    return Measurement(float(np.median(values)), OK)
+
+
+def qtc_fridericia(qt_s, rr_s):
+    """QT / cube-root(RR). Stable at rates where Bazett over-corrects."""
+    if rr_s <= 0:
+        raise ValueError("rr_s must be positive")
+    return qt_s / (rr_s ** (1.0 / 3.0))
+
+
+def qt_interval(signal, peaks=None, fs=360.0):
+    if peaks is None:
+        peaks = detect_r_peaks(signal, fs)
+    if len(peaks) < 2:
+        return Measurement(None, UNAVAILABLE, "Fewer than 2 R-peaks detected")
+    rr = _rr_seconds(peaks, fs)
+    mean_rr = float(np.mean(rr))
+    values = []
+    for peak in peaks:
+        onset, offset = qrs_bounds(signal, int(peak), fs)
+        end = t_end(signal, offset, mean_rr, fs)
+        if end is None:
+            continue
+        qt = (end - onset) / fs
+        if QT_PLAUSIBLE_S[0] <= qt <= QT_PLAUSIBLE_S[1]:
+            values.append(qt)
+    if not values:
+        return Measurement(None, UNAVAILABLE, "T wave end not resolvable")
+    quality = OK if len(values) >= max(1, len(peaks) // 2) else LOW
+    return Measurement(float(np.median(values)), quality)
