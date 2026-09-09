@@ -1121,6 +1121,10 @@ def qrs_axis(leads, fs=360.0):
     """
     if not isinstance(leads, dict) or "I" not in leads or "aVF" not in leads:
         return Measurement(None, UNAVAILABLE, "Requires 12-lead")
+    # A blank panel digitizes to None (see ecg.digitize._trace_row_band), so a
+    # sheet can carry the lead names without carrying usable traces.
+    if leads["I"] is None or leads["aVF"] is None:
+        return Measurement(None, UNAVAILABLE, "Lead I or aVF has no trace")
 
     net_i = _net_qrs_area(leads["I"], fs)
     net_avf = _net_qrs_area(leads["aVF"], fs)
