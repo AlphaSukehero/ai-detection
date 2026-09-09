@@ -313,9 +313,12 @@ from ecg.delineate import qrs_bounds
 def test_qrs_bounds_bracket_the_r_peak():
     fs = 360.0
     sig = np.zeros(720)
-    # A triangular QRS ~80 ms wide centred at index 360
-    for off, amp in [(-14, 0.2), (-7, 1.0), (0, 3.0), (7, 1.0), (14, 0.2)]:
-        sig[360 + off] = amp
+    # A dense triangular QRS ~80 ms wide centred at index 360. Every sample in
+    # the complex is filled: a real trace is contiguous, and a boundary walk
+    # must not be able to halt on a gap between spikes.
+    half = int(0.04 * fs)                      # 40 ms each side
+    for off in range(-half, half + 1):
+        sig[360 + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
     onset, offset = qrs_bounds(sig, peak=360, fs=fs)
     assert onset < 360 < offset
     width_s = (offset - onset) / fs
