@@ -1,0 +1,15 @@
+# Training-only dependencies. The Flask app and PDF reporting need more
+# (flask, reportlab, opencv-python-headless, pydicom); this file is just what
+# scripts/download_raw.py, scripts/prepare_*.py and scripts/train_*.py import.
+#
+# Locally: pip install -r requirements-train.txt
+# On Colab: tensorflow/numpy/sklearn/pandas/pyarrow/pillow are preinstalled,
+# so only `pip install wfdb kagglehub` is actually needed.
+tensorflow==2.21.0
+numpy
+pandas
+pyarrow
+pillow
+scikit-learn
+matplotlib
+wfdb
