@@ -912,6 +912,24 @@ def test_wide_grid_of_panels_detected_as_twelve_lead():
     assert detect_layout(img) == "twelve_lead"
 
 
+def test_panel_positions_map_to_correct_lead_names():
+    """Pin the physical sheet layout: a set-equality check cannot catch a
+    transposition, and Task 10 reads aVF from a specific panel."""
+    from ecg.digitize import LEAD_PANELS_3X4
+    assert LEAD_PANELS_3X4[0] == ["I", "aVR", "V1", "V4"]
+    assert LEAD_PANELS_3X4[1] == ["II", "aVL", "V2", "V5"]
+    assert LEAD_PANELS_3X4[2] == ["III", "aVF", "V3", "V6"]
+    # aVF drives the axis calculation; assert its position explicitly.
+    assert LEAD_PANELS_3X4[2][1] == "aVF"
+    assert LEAD_PANELS_3X4[0][0] == "I"
+
+
+def test_blank_panel_yields_no_signal():
+    """A traceless panel must report nothing, not a fabricated flat line."""
+    from ecg.digitize import _trace_row_band
+    assert _trace_row_band(np.zeros((100, 300))) is None
+
+
 def test_extract_leads_returns_named_signals(tmp_path):
     img = np.full((900, 1200), 255) .astype(np.uint8)
     for row in range(3):
@@ -940,6 +958,17 @@ from scipy.signal import find_peaks as _find_peaks
 LEAD_NAMES_12 = ["I", "II", "III", "aVR", "aVL", "aVF",
                  "V1", "V2", "V3", "V4", "V5", "V6"]
 
+# Physical panel positions on a standard 3x4 printed sheet. The columns are
+# limb / augmented / precordial groups, so reading the sheet row-major gives
+# I, aVR, V1, V4 across the top row — NOT the clinical listing order above.
+# Task 10 reads leads I and aVF from here, so a transposed mapping would
+# silently yield a wrong axis in degrees with no visible error.
+LEAD_PANELS_3X4 = [
+    ["I",   "aVR", "V1", "V4"],
+    ["II",  "aVL", "V2", "V5"],
+    ["III", "aVF", "V3", "V6"],
+]
+
 
 def _trace_row_band(ink_band):
     """Column-wise centre of ink mass within one horizontal band."""
@@ -947,11 +976,17 @@ def _trace_row_band(ink_band):
     rows = np.arange(h, dtype=float)
     out = np.full(ink_band.shape[1], h / 2.0)
     thr = np.percentile(ink_band, 88)
+    found_any = False
     for x in range(ink_band.shape[1]):
         col = ink_band[:, x]
         m = col >= max(thr, 1.0)
         if m.sum() >= 1 and col[m].sum() > 1e-6:
             out[x] = float(np.average(rows[m], weights=col[m]))
+            found_any = True
+    if not found_any:
+        # No ink anywhere in this band: report nothing rather than a flat
+        # zero trace, which would read downstream as a real isoelectric lead.
+        return None
     sig = (h - 1.0) - out
     sig = sig - np.mean(sig)
     std = float(np.std(sig))
@@ -994,7 +1029,7 @@ def extract_leads(image_path):
         band = ink[r * h // 3:(r + 1) * h // 3, :]
         for c in range(4):
             col = band[:, c * w // 4:(c + 1) * w // 4]
-            leads[LEAD_NAMES_12[r * 4 + c]] = _trace_row_band(col)
+            leads[LEAD_PANELS_3X4[r][c]] = _trace_row_band(col)
     return {"leads": leads, "layout": layout, "px_per_mm": px_per_mm}
 ```
 
