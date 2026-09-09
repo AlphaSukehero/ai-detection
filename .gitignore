@@ -9,8 +9,10 @@ __pycache__/
 # Ruff cache
 .ruff_cache/
 
-# Model files (too large for git)
-model/
+# Model files (too large for git) - but keep the JSON model cards,
+# which record what each model was trained on and how it is preprocessed.
+model/*
+!model/*.json
 *.keras
 *.h5
 *.pkl
