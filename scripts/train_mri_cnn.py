@@ -51,9 +51,18 @@ def build():
 def main():
     train, val, test = loader("train", True, True), loader("val", False), loader("test", False)
     model = build()
+    # val_loss is far too noisy here to gate on: it swings between 1.1 and 4.5
+    # over the first ten epochs while training accuracy climbs steadily, so its
+    # early minimum is noise rather than convergence. Watching it with a short
+    # patience stopped training at epoch 9 of 30 and restored an undertrained
+    # epoch-3 checkpoint that never learned glioma (recall 0.00, test accuracy
+    # 0.57). Running the same model to 30 epochs reaches 0.76. Gate on
+    # val_accuracy instead, and give it enough patience to ride out the swings.
     model.fit(train, validation_data=val, epochs=EPOCHS, verbose=2, callbacks=[
-        tf.keras.callbacks.EarlyStopping("val_loss", patience=6, restore_best_weights=True),
-        tf.keras.callbacks.ReduceLROnPlateau("val_loss", factor=0.5, patience=3)])
+        tf.keras.callbacks.EarlyStopping("val_accuracy", mode="max", patience=12,
+                                         restore_best_weights=True),
+        tf.keras.callbacks.ReduceLROnPlateau("val_accuracy", mode="max",
+                                             factor=0.5, patience=6)])
 
     y_true = np.concatenate([np.argmax(y, 1) for _, y in test])
     y_pred = np.argmax(model.predict(test, verbose=0), 1)
