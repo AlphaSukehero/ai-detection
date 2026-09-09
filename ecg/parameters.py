@@ -148,3 +148,47 @@ def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
     else:
         label = "Normal"
     return Measurement(dev_mm, OK, label)
+
+
+def _net_qrs_area(signal, fs):
+    """Signed area under the QRS complexes: the lead's net deflection."""
+    sig = np.asarray(signal, dtype=float).flatten()
+    peaks = detect_r_peaks(sig, fs)
+    if len(peaks) == 0:
+        return 0.0
+    total = 0.0
+    for peak in peaks:
+        onset, offset = qrs_bounds(sig, int(peak), fs)
+        total += float(np.sum(sig[onset:offset + 1]))
+    return total / len(peaks)
+
+
+def qrs_axis(leads, fs=360.0):
+    """Frontal-plane QRS axis from the net deflections of leads I and aVF.
+
+    One lead is a single projection of the electrical vector, so a 2-D angle
+    cannot be recovered from it. Single-lead input therefore reports
+    "Requires 12-lead" rather than a guess.
+    """
+    if not isinstance(leads, dict) or "I" not in leads or "aVF" not in leads:
+        return Measurement(None, UNAVAILABLE, "Requires 12-lead")
+    # A blank panel digitizes to None (see ecg.digitize._trace_row_band), so a
+    # sheet can carry the lead names without carrying usable traces.
+    if leads["I"] is None or leads["aVF"] is None:
+        return Measurement(None, UNAVAILABLE, "Lead I or aVF has no trace")
+
+    net_i = _net_qrs_area(leads["I"], fs)
+    net_avf = _net_qrs_area(leads["aVF"], fs)
+    if abs(net_i) < 1e-9 and abs(net_avf) < 1e-9:
+        return Measurement(None, UNAVAILABLE, "No measurable QRS deflection")
+
+    degrees = float(np.degrees(np.arctan2(net_avf, net_i)))
+    if -30.0 <= degrees <= 90.0:
+        label = "Normal axis"
+    elif -90.0 <= degrees < -30.0:
+        label = "Left axis deviation"
+    elif 90.0 < degrees <= 180.0:
+        label = "Right axis deviation"
+    else:
+        label = "Extreme axis"
+    return Measurement(degrees, OK, label)

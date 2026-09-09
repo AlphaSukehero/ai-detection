@@ -125,3 +125,30 @@ def test_st_elevation_detected_when_segment_raised():
 def test_st_unavailable_without_peaks():
     m = st_deviation(np.zeros(1000), np.array([]), fs=360.0)
     assert m.value is None
+
+
+from ecg.parameters import qrs_axis
+from ecg.quality import UNAVAILABLE
+
+
+def test_axis_unavailable_for_single_lead():
+    m = qrs_axis({"II": _beat_with_p_wave()}, fs=360.0)
+    assert m.value is None
+    assert m.quality == UNAVAILABLE
+    assert m.reason == "Requires 12-lead"
+
+
+def test_axis_near_zero_when_lead_I_positive_and_aVF_flat():
+    sig = _beat_with_p_wave()
+    flat = np.zeros_like(sig)
+    m = qrs_axis({"I": sig, "aVF": flat}, fs=360.0)
+    assert m.value is not None
+    assert abs(m.value) < 20.0
+
+
+def test_axis_near_ninety_when_aVF_dominant():
+    sig = _beat_with_p_wave()
+    flat = np.zeros_like(sig)
+    m = qrs_axis({"I": flat, "aVF": sig}, fs=360.0)
+    assert m.value is not None
+    assert abs(m.value - 90.0) < 20.0
