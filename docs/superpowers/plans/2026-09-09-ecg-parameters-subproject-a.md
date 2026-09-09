@@ -1437,14 +1437,15 @@ def _post(client, path, extra):
     return client.post(path, data=data, content_type="multipart/form-data")
 
 
-def test_ecg_page_reports_new_parameters():
+def test_ecg_route_still_renders_successfully():
+    """Task 13 replaces the parameter source; the template labels for Rhythm,
+    ST Segment and QRS Axis arrive in Task 14, so they are asserted there."""
     flask_app.app.config["TESTING"] = True
     with flask_app.app.test_client() as client:
         resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
-        html = resp.get_data(as_text=True)
         assert resp.status_code == 200
-        for label in ["Rhythm", "ST Segment", "QRS Axis"]:
-            assert label in html, label
+        html = resp.get_data(as_text=True)
+        assert "ECG Waveform Parameters" in html
 
 
 def test_pr_is_no_longer_the_hardcoded_constant():
@@ -1583,7 +1584,26 @@ And add the matching hidden inputs in `templates/ecg.html` inside the report for
                     <input type="hidden" name="axis" value="{{ result.axis }}">
 ```
 
-- [ ] **Step 3: Verify end to end**
+- [ ] **Step 3: Assert the new labels render**
+
+Append to `tests/test_ecg_route.py`:
+
+```python
+def test_ecg_page_reports_new_parameters():
+    """The three parameters the app never computed before must now appear."""
+    flask_app.app.config["TESTING"] = True
+    with flask_app.app.test_client() as client:
+        resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
+        html = resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        for label in ["Rhythm", "ST Segment", "QRS Axis"]:
+            assert label in html, label
+```
+
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
+Expected: PASS (3 passed)
+
+- [ ] **Step 4: Verify end to end**
 
 ```bash
 .venv/bin/python app.py > /tmp/ecg_app.log 2>&1 &
@@ -1597,15 +1617,15 @@ curl -s -X POST http://127.0.0.1:5050/analyze_ecg \
 
 Expected: Rhythm, ST Segment and QRS Axis all render. PR shows a measured value or `—`, never `145.0 ms`.
 
-- [ ] **Step 4: Run the full suite**
+- [ ] **Step 5: Run the full suite**
 
 Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all pass.
 
-- [ ] **Step 5: Commit**
+- [ ] **Step 6: Commit**
 
 ```bash
-git add templates/ecg.html app.py
+git add templates/ecg.html app.py tests/test_ecg_route.py
 git commit -m "feat: display Rhythm, ST segment and QRS axis on ECG page and report"
 ```
 
