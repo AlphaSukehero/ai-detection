@@ -68,3 +68,25 @@ def test_extract_leads_returns_named_signals(tmp_path):
     assert out["layout"] in {"single", "twelve_lead"}
     if out["layout"] == "twelve_lead":
         assert set(out["leads"]) == set(LEAD_NAMES_12)
+
+
+def test_render_then_digitize_preserves_signal_shape(tmp_path):
+    """Spec gate: round-trip correlation must exceed 0.95."""
+    fs, n = 360.0, 1440
+    t = np.arange(n) / fs
+    truth = np.sin(2 * np.pi * 1.2 * t)
+
+    h, w = 300, n
+    img = np.full((h, w), 255.0)
+    mid, amp = h // 2, h // 3
+    for x in range(w):
+        y = int(mid - truth[x] * amp)
+        img[max(0, y - 1):min(h, y + 2), x] = 0.0
+
+    path = os.path.join(tmp_path, "sine.png")
+    Image.fromarray(img.astype(np.uint8)).save(path)
+
+    got = extract_leads(path)["leads"]["II"]
+    m = min(len(got), len(truth))
+    r = np.corrcoef(got[:m], truth[:m])[0, 1]
+    assert r > 0.95, f"round-trip correlation {r:.3f} below 0.95"
