@@ -20,11 +20,4 @@ def detect_r_peaks(signal, fs=360.0):
     if np.max(np.abs(sig)) < 1e-9:
         return np.array([], dtype=int)
     peaks, _ = find_peaks(sig, distance=int(0.25 * fs), prominence=0.5)
-
-    # Check for peak at the start (index 0)
-    peaks_list = list(peaks)
-    if len(sig) > 0 and sig[0] > sig[1] if len(sig) > 1 else True:
-        if len(peaks_list) == 0 or peaks_list[0] > 0:
-            peaks_list.insert(0, 0)
-
-    return np.array(peaks_list, dtype=int)
+    return peaks.astype(int)
