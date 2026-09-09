@@ -1,5 +1,5 @@
 import numpy as np
-from ecg.delineate import detect_r_peaks
+from ecg.delineate import detect_r_peaks, qrs_bounds
 
 
 def _synth_ecg(n_beats=10, fs=360.0, rr=0.8):
@@ -30,3 +30,18 @@ def test_detects_all_r_peaks_at_known_positions():
 def test_returns_empty_array_for_flat_signal():
     peaks = detect_r_peaks(np.zeros(1000), fs=360.0)
     assert len(peaks) == 0
+
+
+def test_qrs_bounds_bracket_the_r_peak():
+    fs = 360.0
+    sig = np.zeros(720)
+    # A dense triangular QRS ~80 ms wide centred at index 360. Every sample in
+    # the complex is filled: a real trace is contiguous, and a boundary walk
+    # must not be able to halt on a gap between spikes.
+    half = int(0.04 * fs)                      # 40 ms each side
+    for off in range(-half, half + 1):
+        sig[360 + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
+    onset, offset = qrs_bounds(sig, peak=360, fs=fs)
+    assert onset < 360 < offset
+    width_s = (offset - onset) / fs
+    assert 0.03 <= width_s <= 0.20
