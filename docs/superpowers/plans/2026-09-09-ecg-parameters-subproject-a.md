@@ -754,7 +754,8 @@ def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
         j = offset + int(ST_OFFSET_S * fs)
         if j >= len(sig):
             continue
-        deviations.append((sig[j] - baseline) / mm_per_mv)
+        # mm = mV x (mm per mV). Standard ECG gain is 10 mm/mV.
+        deviations.append((sig[j] - baseline) * mm_per_mv)
 
     if not deviations:
         return Measurement(None, UNAVAILABLE, "ST point beyond signal end")
