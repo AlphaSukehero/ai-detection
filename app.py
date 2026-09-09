@@ -43,6 +43,8 @@ except Exception as e:
     TF_AVAILABLE = False
 
 from mlkit.registry import RegistryError, load_card, validate_card
+from ecg.parameters import analyse as analyse_ecg_parameters
+from ecg.digitize import extract_leads
 
 # Optional DICOM support
 try:
@@ -549,73 +551,6 @@ def predict_ecg(X):
         "atrial_probability": f"{mean_prob * 100:.2f}",
         "beat_predictions": predictions
     }
-
-
-def calculate_ecg_parameters(ecg_values, sampling_rate=360):
-    signal = np.asarray(ecg_values, dtype=float).flatten()
-    parameters = {
-        "heart_rate": "—",
-        "rr_interval": "—",
-        "qrs_duration": "—",
-        "pr_interval": "145.0 ms",
-        "qt_interval": "—",
-        "qtc": "—",
-        "sdnn": "—",
-        "rmssd": "—",
-        "signal_quality": "Good"
-    }
-
-    if len(signal) < 100:
-        parameters["signal_quality"] = "Insufficient data"
-        return parameters
-
-    signal = signal - np.mean(signal)
-    std = np.std(signal)
-    if std > 0:
-        signal = signal / std
-
-    peaks, _ = find_peaks(signal, distance=int(0.25 * sampling_rate), prominence=0.5)
-
-    if len(peaks) >= 2:
-        rr_intervals = np.diff(peaks) / sampling_rate
-        mean_rr = float(np.mean(rr_intervals))
-        heart_rate = 60.0 / mean_rr
-
-        parameters["heart_rate"] = f"{heart_rate:.1f} bpm"
-        parameters["rr_interval"] = f"{mean_rr:.3f} s"
-
-        if len(rr_intervals) >= 2:
-            sdnn = np.std(rr_intervals, ddof=1) * 1000
-            parameters["sdnn"] = f"{sdnn:.1f} ms"
-
-        if len(rr_intervals) >= 3:
-            rmssd = np.sqrt(np.mean(np.diff(rr_intervals) ** 2)) * 1000
-            parameters["rmssd"] = f"{rmssd:.1f} ms"
-
-        qrs_values = []
-        thresh = 0.1 * np.max(np.abs(signal))
-        for peak in peaks:
-            left = peak
-            while left > 0 and abs(signal[left]) > thresh:
-                left -= 1
-            right = peak
-            while right < len(signal) - 1 and abs(signal[right]) > thresh:
-                right += 1
-            duration = (right - left) / sampling_rate
-            if 0.03 <= duration <= 0.20:
-                qrs_values.append(duration)
-
-        if qrs_values:
-            parameters["qrs_duration"] = f"{np.mean(qrs_values) * 1000:.1f} ms"
-
-        qt = 0.40
-        qtc = qt / np.sqrt(mean_rr)
-        parameters["qt_interval"] = f"{qt * 1000:.0f} ms"
-        parameters["qtc"] = f"{qtc * 1000:.0f} ms"
-    else:
-        parameters["signal_quality"] = "Unable to detect sufficient R-peaks"
-
-    return parameters
 
 
 def create_ecg_plot(ecg_values, filename):
@@ -1322,17 +1257,21 @@ def analyze_ecg():
 
     try:
         if is_image:
-            # Digitize an ECG strip photograph/screenshot into a signal
-            X = extract_ecg_signal_from_image(filepath)
-            ecg_values = X
-            input_source = "ECG image digitized into signal"
+            digitized = extract_leads(filepath)
+            leads = digitized["leads"]
+            ecg_values = leads.get("II", next(iter(leads.values())))
+            X = prepare_qcnn_input(ecg_values)
+            report = analyse_ecg_parameters(leads, fs=360.0,
+                                            px_per_mm=digitized["px_per_mm"],
+                                            from_image=True)
+            input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
         else:
             ecg_values = load_ecg_file(filepath)
             X = prepare_qcnn_input(ecg_values)
+            report = analyse_ecg_parameters(ecg_values, fs=360.0)
             input_source = "ECG data file"
 
         qcnn_result = predict_ecg(X)
-        parameters = calculate_ecg_parameters(ecg_values)
 
         plot_filename = "ecg_waveform_" + uuid.uuid4().hex[:8] + ".png"
         create_ecg_plot(ecg_values, plot_filename)
@@ -1356,15 +1295,18 @@ def analyze_ecg():
             "beat_distribution": qcnn_result.get("beat_distribution"),
             "beat_counts": qcnn_result.get("beat_counts"),
             "beats_analyzed": qcnn_result.get("beats_analyzed"),
-            "heart_rate": parameters["heart_rate"],
-            "rr_interval": parameters["rr_interval"],
-            "qrs_duration": parameters["qrs_duration"],
-            "pr_interval": parameters["pr_interval"],
-            "qt_interval": parameters["qt_interval"],
-            "qtc": parameters["qtc"],
-            "sdnn": parameters["sdnn"],
-            "rmssd": parameters["rmssd"],
-            "signal_quality": parameters["signal_quality"],
+            "heart_rate": report["display"]["heart_rate"],
+            "rr_interval": report["display"]["rr_interval"],
+            "qrs_duration": report["display"]["qrs_duration"],
+            "pr_interval": report["display"]["pr_interval"],
+            "qt_interval": report["display"]["qt_interval"],
+            "qtc": report["display"]["qtc"],
+            "sdnn": report["display"]["sdnn"],
+            "rmssd": report["display"]["rmssd"],
+            "rhythm": report["display"]["rhythm"],
+            "st_segment": report["display"]["st_segment"],
+            "axis": report["display"]["axis"],
+            "signal_quality": "Good" if report["heart_rate"].value else "Insufficient data",
             "interpretation": interpretation,
             "recommendation": recommendation,
             "waveform": plot_filename,
