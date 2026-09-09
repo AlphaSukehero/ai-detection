@@ -1196,6 +1196,33 @@ def test_analyse_marks_axis_unavailable_for_single_lead():
     assert report["axis"].reason == "Requires 12-lead"
 
 
+def test_analyse_accepts_a_dict_of_leads():
+    sig = _beat_with_p_wave()
+    report = analyse({"I": sig, "aVF": np.zeros_like(sig), "II": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_skips_blank_leads_when_choosing_primary():
+    """A None-valued lead II must not crash or become the primary signal."""
+    sig = _beat_with_p_wave()
+    report = analyse({"II": None, "I": sig}, fs=360.0)
+    assert report["heart_rate"].value is not None
+
+
+def test_analyse_reports_all_unavailable_when_every_lead_is_blank():
+    report = analyse({"I": None, "II": None}, fs=360.0)
+    assert report["heart_rate"].value is None
+    assert report["display"]["heart_rate"] == "—"
+
+
+def test_st_unavailable_from_image_without_grid_scale():
+    """ST is in millimetres, so no paper scale means no honest ST value."""
+    report = analyse(_beat_with_p_wave(), fs=360.0,
+                     px_per_mm=None, from_image=True)
+    assert report["st_segment"].value is None
+    assert report["st_segment"].reason == "ECG grid not detected"
+
+
 def test_display_strings_use_dash_for_unavailable():
     report = analyse(np.zeros(500), fs=360.0)
     assert report["display"]["heart_rate"] == "—"
@@ -1211,11 +1238,32 @@ Expected: FAIL with `ImportError: cannot import name 'analyse'`
 Append to `ecg/parameters.py`:
 
 ```python
+def _all_unavailable(reason):
+    """A complete report in which nothing could be measured.
+
+    Returned rather than raising, so a blank or unreadable image degrades to
+    honest dashes instead of a 500.
+    """
+    keys = ["heart_rate", "rhythm", "pr_interval", "qrs_duration",
+            "qt_interval", "qtc", "st_segment", "axis", "rr_interval",
+            "sdnn", "rmssd"]
+    report = {k: Measurement(None, UNAVAILABLE, reason) for k in keys}
+    report["display"] = {k: "—" for k in keys}
+    return report
+
+
 def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
     """Measure every displayed parameter, flagging what could not be measured."""
     if isinstance(signal_or_leads, dict):
         leads = signal_or_leads
-        primary = leads.get("II", next(iter(leads.values())))
+        # A blank panel digitizes to None, and dict.get() only substitutes its
+        # default when the KEY is missing - not when the value is None. Pick the
+        # first lead that actually carries a trace, preferring II.
+        primary = leads.get("II")
+        if primary is None:
+            primary = next((v for v in leads.values() if v is not None), None)
+        if primary is None:
+            return _all_unavailable("No lead carried a usable trace")
     else:
         leads = {"II": np.asarray(signal_or_leads, dtype=float).flatten()}
         primary = leads["II"]
