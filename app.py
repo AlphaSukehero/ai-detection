@@ -1739,14 +1739,20 @@ def download_brain_tumor_report():
     ]
 
     if prediction != "No Tumor":
+        area_val = form.get('area', '—')
+        width_val = form.get('width', '—')
+        height_val = form.get('height', '—')
+        location_val = form.get("location", NOT_PROVIDED)
+        severity_val = form.get("severity", NOT_PROVIDED)
+        spread_val = form.get("spread", NOT_PROVIDED)
         sections.append(("table", "2. Lesion Analysis Metrics (Grad-CAM derived)", [
             ("Metric", "Estimated Value"),
-            ("Area of Activation", f"{form.get('area', '—')}% of image"),
-            ("Bounding Width", f"{form.get('width', '—')} px"),
-            ("Bounding Height", f"{form.get('height', '—')} px"),
-            ("Approximate Location", form.get("location", NOT_PROVIDED)),
-            ("Severity Indicator", form.get("severity", NOT_PROVIDED)),
-            ("Spread Indicator", form.get("spread", NOT_PROVIDED)),
+            ("Area of Activation", f"{area_val}% of image"),
+            ("Bounding Width", f"{width_val} px"),
+            ("Bounding Height", f"{height_val} px"),
+            ("Approximate Location", location_val),
+            ("Severity Indicator", severity_val),
+            ("Spread Indicator", spread_val),
         ]))
 
     sections.append(("text", "3. Radiological Findings Summary",
