@@ -17,7 +17,9 @@
 - ST: Elevated if `> +1.0 mm`, Depressed if `< -1.0 mm`, else Normal.
 - Rhythm: Regular if RR coefficient of variation `< 0.10`, else Irregular.
 - Axis requires 12-lead; single-lead yields `None` with reason `"Requires 12-lead"`.
-- Run tests with `.venv/bin/pytest`. Never bare `pytest`.
+- Run tests with `.venv/bin/python -m pytest`. Never bare `pytest`, and never
+  `.venv/bin/pytest` — that console script has a stale shebang pointing at a
+  previous checkout path and cannot execute.
 - Every measurement function takes a signal in **millivolt-normalised units** and returns times in **seconds**; only the formatting layer converts to ms.
 
 ---
@@ -52,7 +54,7 @@ def test_unavailable_measurement_renders_dash():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_quality.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_quality.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -82,7 +84,7 @@ class Measurement:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_quality.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_quality.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -145,7 +147,7 @@ def test_returns_empty_array_for_flat_signal():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.delineate'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -178,7 +180,7 @@ def detect_r_peaks(signal, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -236,7 +238,7 @@ def test_irregular_rhythm_for_varying_rr():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.parameters'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -280,7 +282,7 @@ def rhythm(peaks, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (4 passed)
 
 - [ ] **Step 5: Commit**
@@ -327,7 +329,7 @@ def test_qrs_bounds_bracket_the_r_peak():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py::test_qrs_bounds_bracket_the_r_peak -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py::test_qrs_bounds_bracket_the_r_peak -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_bounds'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -361,7 +363,7 @@ def qrs_bounds(signal, peak, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate.py -v`
 Expected: PASS (3 passed)
 
 - [ ] **Step 5: Commit**
@@ -433,7 +435,7 @@ def test_pr_unavailable_when_no_p_wave():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'pr_interval'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -503,7 +505,7 @@ def pr_interval(signal, peaks=None, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (6 passed)
 
 - [ ] **Step 5: Commit**
@@ -564,7 +566,7 @@ def test_qt_returns_measurement_not_constant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_duration'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -654,7 +656,7 @@ def qt_interval(signal, peaks=None, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (10 passed)
 
 - [ ] **Step 5: Commit**
@@ -716,7 +718,7 @@ from ecg.delineate import detect_r_peaks
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'st_deviation'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -764,7 +766,7 @@ def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (13 passed)
 
 - [ ] **Step 5: Commit**
@@ -813,7 +815,7 @@ def test_returns_none_for_blank_page():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: FAIL with `ModuleNotFoundError: No module named 'ecg.digitize'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -857,7 +859,7 @@ def detect_grid_scale(gray):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -918,7 +920,7 @@ def test_extract_leads_returns_named_signals(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: FAIL with `ImportError: cannot import name 'detect_layout'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -992,7 +994,7 @@ def extract_leads(image_path):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py -v`
 Expected: PASS (5 passed)
 
 - [ ] **Step 5: Commit**
@@ -1048,7 +1050,7 @@ def test_axis_near_ninety_when_aVF_dominant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'qrs_axis'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1098,7 +1100,7 @@ def qrs_axis(leads, fs=360.0):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (16 passed)
 
 - [ ] **Step 5: Commit**
@@ -1156,7 +1158,7 @@ def test_display_strings_use_dash_for_unavailable():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: FAIL with `ImportError: cannot import name 'analyse'`
 
 - [ ] **Step 3: Write minimal implementation**
@@ -1235,7 +1237,7 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_parameters.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_parameters.py -v`
 Expected: PASS (20 passed)
 
 - [ ] **Step 5: Commit**
@@ -1285,12 +1287,12 @@ def test_render_then_digitize_preserves_signal_shape(tmp_path):
 
 - [ ] **Step 2: Run test to verify it fails or passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_digitize.py::test_render_then_digitize_preserves_signal_shape -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_digitize.py::test_render_then_digitize_preserves_signal_shape -v`
 Expected: This validates Task 9's tracer. If it FAILS, the tracer is wrong — fix `_trace_row_band` in `ecg/digitize.py` until it passes. Do not weaken the 0.95 threshold.
 
 - [ ] **Step 3: Run the whole suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all tests pass, including the pre-existing ones.
 
 - [ ] **Step 4: Commit**
@@ -1347,7 +1349,7 @@ def test_pr_is_no_longer_the_hardcoded_constant():
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `.venv/bin/pytest tests/test_ecg_route.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
 Expected: FAIL — `"Rhythm"` absent and `"145.0 ms"` still present.
 
 - [ ] **Step 3: Write the implementation**
@@ -1397,7 +1399,7 @@ Then replace the parameter entries in the `result` dict with:
 
 - [ ] **Step 4: Run test to verify it passes**
 
-Run: `.venv/bin/pytest tests/test_ecg_route.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_route.py -v`
 Expected: PASS (2 passed)
 
 - [ ] **Step 5: Commit**
@@ -1489,7 +1491,7 @@ Expected: Rhythm, ST Segment and QRS Axis all render. PR shows a measured value 
 
 - [ ] **Step 4: Run the full suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
@@ -1573,7 +1575,7 @@ def test_mean_sensitivity_across_records():
 
 - [ ] **Step 2: Run the test**
 
-Run: `.venv/bin/pytest tests/test_ecg_delineate_mitbih.py -v`
+Run: `.venv/bin/python -m pytest tests/test_ecg_delineate_mitbih.py -v`
 Expected: This measures the Task 2 detector on real data. If sensitivity falls
 below threshold, fix `detect_r_peaks` — typically by band-pass filtering
 5-15 Hz before peak-finding to suppress baseline wander and T waves:
@@ -1605,7 +1607,7 @@ tests/test_ecg_delineate_mitbih.py for the gate.
 
 - [ ] **Step 4: Run the full suite**
 
-Run: `.venv/bin/pytest tests/ -v`
+Run: `.venv/bin/python -m pytest tests/ -v`
 Expected: all pass.
 
 - [ ] **Step 5: Commit**
