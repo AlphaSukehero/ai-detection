@@ -241,13 +241,15 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
         st = st_deviation(primary, peaks, fs)
 
     if qt.value is not None and len(peaks) >= 2:
-        mean_rr = float(np.mean(_rr_seconds(peaks, fs)))
+        rr_s = _rr_seconds(peaks, fs)
+        mean_rr = float(np.mean(rr_s))
         qtc = Measurement(qtc_fridericia(qt.value, mean_rr), qt.quality)
         rr = Measurement(mean_rr, OK)
-        rr_s = _rr_seconds(peaks, fs)
-        sdnn = Measurement(float(np.std(rr_s, ddof=1)) * 1000.0, OK) \
+        # Stored in seconds like every other duration here; the display layer
+        # is the only place that converts to milliseconds.
+        sdnn = Measurement(float(np.std(rr_s, ddof=1)), OK) \
             if len(rr_s) >= 2 else Measurement(None, UNAVAILABLE, "Too few beats")
-        rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))) * 1000.0, OK) \
+        rmssd = Measurement(float(np.sqrt(np.mean(np.diff(rr_s) ** 2))), OK) \
             if len(rr_s) >= 3 else Measurement(None, UNAVAILABLE, "Too few beats")
     else:
         qtc = Measurement(None, UNAVAILABLE, "QT not measurable")
@@ -278,7 +280,11 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
         "axis": (f"{axis.value:+.0f}° ({axis.reason})"
                  if axis.value is not None else "—"),
         "rr_interval": rr.format("s", 3),
-        "sdnn": sdnn.format("ms"),
-        "rmssd": rmssd.format("ms"),
+        "sdnn": Measurement(
+            sdnn.value * 1000 if sdnn.value is not None else None,
+            sdnn.quality).format("ms"),
+        "rmssd": Measurement(
+            rmssd.value * 1000 if rmssd.value is not None else None,
+            rmssd.quality).format("ms"),
     }
     return report

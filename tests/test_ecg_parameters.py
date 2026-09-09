@@ -205,6 +205,15 @@ def test_st_unavailable_from_image_without_grid_scale():
     assert report["st_segment"].reason == "ECG grid not detected"
 
 
+def test_hrv_measurements_are_stored_in_seconds():
+    """Every Measurement in the report uses seconds; only display converts."""
+    report = analyse(_beat_with_p_wave(), fs=360.0)
+    if report["sdnn"].value is not None:
+        # ~0.0 s for a metronomic synthetic signal, but certainly sub-second.
+        assert report["sdnn"].value < 1.0
+        assert report["display"]["sdnn"].endswith("ms")
+
+
 def test_display_strings_use_dash_for_unavailable():
     report = analyse(np.zeros(500), fs=360.0)
     assert report["display"]["heart_rate"] == "—"
