@@ -18,3 +18,35 @@ def test_detects_known_grid_spacing():
 
 def test_returns_none_for_blank_page():
     assert detect_grid_scale(np.full((400, 600), 255.0)) is None
+
+
+from ecg.digitize import detect_layout, extract_leads, LEAD_NAMES_12
+from PIL import Image
+import os
+
+
+def test_single_strip_detected_as_single():
+    img = np.full((120, 1200), 255.0)
+    img[60, :] = 0.0
+    assert detect_layout(img) == "single"
+
+
+def test_wide_grid_of_panels_detected_as_twelve_lead():
+    """Three rows of traces across a roughly page-shaped image."""
+    img = np.full((900, 1200), 255.0)
+    for row in range(3):
+        y = 150 + row * 300
+        img[y, :] = 0.0
+    assert detect_layout(img) == "twelve_lead"
+
+
+def test_extract_leads_returns_named_signals(tmp_path):
+    img = np.full((900, 1200), 255) .astype(np.uint8)
+    for row in range(3):
+        img[150 + row * 300, :] = 0
+    path = os.path.join(tmp_path, "ecg.png")
+    Image.fromarray(img).save(path)
+    out = extract_leads(path)
+    assert out["layout"] in {"single", "twelve_lead"}
+    if out["layout"] == "twelve_lead":
+        assert set(out["leads"]) == set(LEAD_NAMES_12)

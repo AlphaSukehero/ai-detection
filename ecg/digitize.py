@@ -32,3 +32,67 @@ def detect_grid_scale(gray):
     if peak < 4.0 * float(np.median(band)):
         return None
     return float(1.0 / freqs[valid][int(np.argmax(band))])
+
+
+from PIL import Image
+from scipy.signal import find_peaks as _find_peaks
+
+LEAD_NAMES_12 = ["I", "II", "III", "aVR", "aVL", "aVF",
+                 "V1", "V2", "V3", "V4", "V5", "V6"]
+
+
+def _trace_row_band(ink_band):
+    """Column-wise centre of ink mass within one horizontal band."""
+    h = ink_band.shape[0]
+    rows = np.arange(h, dtype=float)
+    out = np.full(ink_band.shape[1], h / 2.0)
+    thr = np.percentile(ink_band, 88)
+    for x in range(ink_band.shape[1]):
+        col = ink_band[:, x]
+        m = col >= max(thr, 1.0)
+        if m.sum() >= 1 and col[m].sum() > 1e-6:
+            out[x] = float(np.average(rows[m], weights=col[m]))
+    sig = (h - 1.0) - out
+    sig = sig - np.mean(sig)
+    std = float(np.std(sig))
+    return sig / std if std > 1e-9 else sig
+
+
+def detect_layout(gray):
+    """Distinguish a rhythm strip from a 3x4 twelve-lead sheet.
+
+    A twelve-lead sheet has several well-separated horizontal trace bands; a
+    rhythm strip has one. Counting ink-density bands is more robust than
+    trying to find panel borders, which many printouts omit.
+    """
+    arr = np.asarray(gray, dtype=float)
+    ink = 255.0 - arr
+    rows = ink.mean(axis=1)
+    if np.std(rows) < 1e-6:
+        return "single"
+    rows = rows - rows.mean()
+    bands, _ = _find_peaks(rows, distance=max(1, arr.shape[0] // 12),
+                           prominence=float(np.std(rows)))
+    return "twelve_lead" if len(bands) >= 3 else "single"
+
+
+def extract_leads(image_path):
+    """Digitize an ECG image into one signal per lead."""
+    img = Image.open(image_path).convert("L")
+    gray = np.asarray(img, dtype=float)
+    px_per_mm = detect_grid_scale(gray)
+    layout = detect_layout(gray)
+    ink = 255.0 - gray
+
+    if layout == "single":
+        return {"leads": {"II": _trace_row_band(ink)},
+                "layout": layout, "px_per_mm": px_per_mm}
+
+    h, w = ink.shape
+    leads = {}
+    for r in range(3):
+        band = ink[r * h // 3:(r + 1) * h // 3, :]
+        for c in range(4):
+            col = band[:, c * w // 4:(c + 1) * w // 4]
+            leads[LEAD_NAMES_12[r * 4 + c]] = _trace_row_band(col)
+    return {"leads": leads, "layout": layout, "px_per_mm": px_per_mm}
