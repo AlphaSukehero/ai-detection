@@ -404,12 +404,17 @@ def _beat_with_p_wave(fs=360.0, n_beats=6, rr=0.8):
         r = int(b * rr * fs) + 100
         if r + 20 >= n:
             break
-        sig[r] = 3.0                       # R peak
-        sig[r - 1] = sig[r + 1] = 1.0
+        # Dense QRS ~70 ms wide: a real complex occupies every sample it spans,
+        # and a width measured from isolated spikes is not physiological.
+        half = int(0.035 * fs)
+        for off in range(-half, half + 1):
+            if 0 <= r + off < n:
+                sig[r + off] = 3.0 * (1.0 - abs(off) / (half + 1.0))
         p = r - int(0.16 * fs)             # P wave 160 ms before R
-        if p > 2:
-            sig[p] = 0.45
-            sig[p - 1] = sig[p + 1] = 0.25
+        pw = int(0.02 * fs)
+        if p - pw > 0:
+            for off in range(-pw, pw + 1):
+                sig[p + off] = 0.45 * (1.0 - abs(off) / (pw + 1.0))
     return sig
 
 
