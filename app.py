@@ -1677,6 +1677,17 @@ def _slug(value, fallback):
 # DOWNLOAD REPORTS (PDF)
 # ------------------------------------------------------------
 
+def _pdf_value(raw):
+    """Render an unmeasured parameter explicitly in the PDF.
+
+    A dash in a clinical report is ambiguous - it could mean zero, or missing.
+    "Not measurable" says which.
+    """
+    if raw is None or raw.strip() in {"", "—", "-"}:
+        return "Not measurable"
+    return raw
+
+
 @app.route("/download_ecg_report", methods=["POST"])
 def download_ecg_report():
     form = request.form
@@ -1702,6 +1713,9 @@ def download_ecg_report():
             ("QTc (Corrected)", form.get("qtc", "—")),
             ("HRV SDNN", form.get("sdnn", "—")),
             ("HRV RMSSD", form.get("rmssd", "—")),
+            ("Rhythm", _pdf_value(form.get("rhythm"))),
+            ("ST Segment", _pdf_value(form.get("st_segment"))),
+            ("QRS Axis", _pdf_value(form.get("axis"))),
         ]),
         ("text", "3. Clinical Interpretation", form.get("interpretation", NOT_PROVIDED)),
         ("text", "4. Recommended Next Steps", form.get("recommendation", NOT_PROVIDED)),

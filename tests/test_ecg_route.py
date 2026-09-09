@@ -27,3 +27,14 @@ def test_pr_is_no_longer_the_hardcoded_constant():
         resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
         html = resp.get_data(as_text=True)
         assert "145.0 ms" not in html
+
+
+def test_ecg_page_reports_new_parameters():
+    """The three parameters the app never computed before must now appear."""
+    flask_app.app.config["TESTING"] = True
+    with flask_app.app.test_client() as client:
+        resp = _post(client, "/analyze_ecg", {"sample_type": "normal"})
+        html = resp.get_data(as_text=True)
+        assert resp.status_code == 200
+        for label in ["Rhythm", "ST Segment", "QRS Axis"]:
+            assert label in html, label

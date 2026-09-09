@@ -207,6 +207,22 @@
                     </div>
                 </div>
 
+                <!-- Row 2b: Rhythm / ST Segment / QRS Axis -->
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px;">
+                    <div class="metric-box">
+                        <div class="metric-label">Rhythm</div>
+                        <div class="metric-value" style="font-size: 16px; color: {% if result.rhythm == 'Regular' %}var(--success){% elif result.rhythm == '—' %}var(--text-muted){% else %}var(--warning){% endif %};">{{ result.rhythm }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">ST Segment</div>
+                        <div class="metric-value" style="font-size: 16px; color: {% if 'Normal' in result.st_segment %}var(--success){% elif result.st_segment == '—' %}var(--text-muted){% else %}var(--danger){% endif %};">{{ result.st_segment }}</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="metric-label">QRS Axis</div>
+                        <div class="metric-value" style="font-size: 16px; color: #a78bfa;">{{ result.axis }}</div>
+                    </div>
+                </div>
+
                 <!-- Row 3: SDNN / RMSSD / Signal Quality -->
                 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px;">
                     <div class="metric-box">
@@ -276,6 +292,9 @@
                     <input type="hidden" name="qtc" value="{{ result.qtc }}">
                     <input type="hidden" name="sdnn" value="{{ result.sdnn }}">
                     <input type="hidden" name="rmssd" value="{{ result.rmssd }}">
+                    <input type="hidden" name="rhythm" value="{{ result.rhythm }}">
+                    <input type="hidden" name="st_segment" value="{{ result.st_segment }}">
+                    <input type="hidden" name="axis" value="{{ result.axis }}">
                     <input type="hidden" name="interpretation" value="{{ result.interpretation }}">
                     <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
                     <input type="hidden" name="atrial_probability" value="{{ result.atrial_probability }}">
