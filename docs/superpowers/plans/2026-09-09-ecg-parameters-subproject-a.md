@@ -115,10 +115,13 @@ from ecg.delineate import detect_r_peaks
 
 def _synth_ecg(n_beats=10, fs=360.0, rr=0.8):
     """Build a signal with sharp R spikes at exactly known positions."""
-    n = int(n_beats * rr * fs)
+    # Offset the first beat off sample 0: find_peaks needs neighbours on both
+    # sides, so a peak at index 0 is undetectable by construction.
+    lead_in = 100
+    n = int(n_beats * rr * fs) + lead_in
     sig = np.zeros(n)
-    idx = (np.arange(n_beats) * rr * fs).astype(int)
-    idx = idx[idx < n]
+    idx = (np.arange(n_beats) * rr * fs).astype(int) + lead_in
+    idx = idx[idx < n - 1]
     for i in idx:
         sig[i] = 3.0
         if i > 0:
