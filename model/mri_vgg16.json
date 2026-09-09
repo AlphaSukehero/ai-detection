@@ -1,0 +1,20 @@
+{
+  "task": "mri",
+  "classes": [
+    "glioma",
+    "meningioma",
+    "notumor",
+    "pituitary"
+  ],
+  "input_shape": [
+    224,
+    224,
+    3
+  ],
+  "preprocessing": "vgg16_preprocess_input",
+  "metrics": {
+    "test_accuracy": 0.92739898989899,
+    "macro_f1": 0.925487120201307
+  },
+  "trained": "2026-09-09"
+}

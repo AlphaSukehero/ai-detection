@@ -1,0 +1,26 @@
+{
+  "task": "satellite",
+  "classes": [
+    "AnnualCrop",
+    "Forest",
+    "HerbaceousVegetation",
+    "Highway",
+    "Industrial",
+    "Pasture",
+    "PermanentCrop",
+    "Residential",
+    "River",
+    "SeaLake"
+  ],
+  "input_shape": [
+    64,
+    64,
+    3
+  ],
+  "preprocessing": "rescale_255",
+  "metrics": {
+    "test_accuracy": 0.9566666666666667,
+    "macro_f1": 0.9567279501177083
+  },
+  "trained": "2026-09-09"
+}
