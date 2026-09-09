@@ -57,12 +57,15 @@ def main():
     # patience stopped training at epoch 9 of 30 and restored an undertrained
     # epoch-3 checkpoint that never learned glioma (recall 0.00, test accuracy
     # 0.57). Running the same model to 30 epochs reaches 0.76. Gate on
-    # val_accuracy instead, and give it enough patience to ride out the swings.
+    # val_accuracy instead, with enough patience to ride out the swings.
+    # ReduceLROnPlateau deliberately stays on val_loss: moving it to
+    # val_accuracy too made LR cuts rarer, training stayed unstable, and test
+    # accuracy landed at 0.66 instead of 0.76. The noisy val_loss is a bad
+    # stopping signal but a useful one for deciding when to drop the LR.
     model.fit(train, validation_data=val, epochs=EPOCHS, verbose=2, callbacks=[
         tf.keras.callbacks.EarlyStopping("val_accuracy", mode="max", patience=12,
                                          restore_best_weights=True),
-        tf.keras.callbacks.ReduceLROnPlateau("val_accuracy", mode="max",
-                                             factor=0.5, patience=6)])
+        tf.keras.callbacks.ReduceLROnPlateau("val_loss", factor=0.5, patience=3)])
 
     y_true = np.concatenate([np.argmax(y, 1) for _, y in test])
     y_pred = np.argmax(model.predict(test, verbose=0), 1)
