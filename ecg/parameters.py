@@ -32,3 +32,31 @@ def rhythm(peaks, fs=360.0):
     cv = float(np.std(rr) / mean_rr)
     label = "Regular" if cv < REGULAR_CV_THRESHOLD else "Irregular"
     return Measurement(cv, OK, label)
+
+
+from ecg.delineate import detect_r_peaks, qrs_bounds, p_onset
+
+PR_PLAUSIBLE_S = (0.08, 0.30)
+
+
+def pr_interval(signal, peaks=None, fs=360.0):
+    """Median P-onset to QRS-onset across beats."""
+    if peaks is None:
+        peaks = detect_r_peaks(signal, fs)
+    if len(peaks) == 0:
+        return Measurement(None, UNAVAILABLE, "No R-peaks detected")
+
+    values = []
+    for peak in peaks:
+        onset, _ = qrs_bounds(signal, int(peak), fs)
+        p = p_onset(signal, onset, fs)
+        if p is None:
+            continue
+        pr = (onset - p) / fs
+        if PR_PLAUSIBLE_S[0] <= pr <= PR_PLAUSIBLE_S[1]:
+            values.append(pr)
+
+    if not values:
+        return Measurement(None, UNAVAILABLE, "P wave not detectable")
+    quality = OK if len(values) >= max(1, len(peaks) // 2) else LOW
+    return Measurement(float(np.median(values)), quality)

@@ -45,3 +45,32 @@ def qrs_bounds(signal, peak, fs=360.0):
     while offset < hi and abs(sig[offset]) > thresh:
         offset += 1
     return int(onset), int(offset)
+
+
+P_SEARCH_EARLY_S = 0.30      # look this far back from QRS onset
+P_SEARCH_LATE_S = 0.08       # ...but not closer than this
+P_MIN_PROMINENCE = 0.08      # relative to normalised signal
+
+
+def p_onset(signal, qrs_onset, fs=360.0):
+    """Find the P-wave start before a QRS, or None when no P wave is present.
+
+    Atrial fibrillation genuinely has no P wave, so None is a real clinical
+    answer here rather than a detection failure.
+    """
+    sig = _normalise(signal)
+    lo = max(0, qrs_onset - int(P_SEARCH_EARLY_S * fs))
+    hi = max(lo + 1, qrs_onset - int(P_SEARCH_LATE_S * fs))
+    window = sig[lo:hi]
+    if len(window) < 3:
+        return None
+    peaks, props = find_peaks(window, prominence=P_MIN_PROMINENCE)
+    if len(peaks) == 0:
+        return None
+    best = peaks[int(np.argmax(props["prominences"]))]
+    # Walk back to where the P wave leaves baseline.
+    idx = best
+    thresh = 0.3 * window[best]
+    while idx > 0 and window[idx] > thresh:
+        idx -= 1
+    return int(lo + idx)

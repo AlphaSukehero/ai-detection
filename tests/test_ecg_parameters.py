@@ -27,3 +27,43 @@ def test_irregular_rhythm_for_varying_rr():
     peaks = np.array([0, 200, 620, 780, 1300, 1450, 2000, 2100])
     m = rhythm(peaks, fs=360.0)
     assert m.reason == "Irregular"
+
+
+from ecg.parameters import pr_interval
+from ecg.quality import UNAVAILABLE
+
+
+def _beat_with_p_wave(fs=360.0, n_beats=6, rr=0.8):
+    n = int(n_beats * rr * fs)
+    sig = np.zeros(n)
+    for b in range(n_beats):
+        r = int(b * rr * fs) + 100
+        if r + 20 >= n:
+            break
+        sig[r] = 3.0                       # R peak
+        sig[r - 1] = sig[r + 1] = 1.0
+        p = r - int(0.16 * fs)             # P wave 160 ms before R
+        if p > 2:
+            sig[p] = 0.45
+            sig[p - 1] = sig[p + 1] = 0.25
+    return sig
+
+
+def test_pr_interval_measured_near_expected_value():
+    sig = _beat_with_p_wave()
+    m = pr_interval(sig, None, fs=360.0)
+    assert m.value is not None
+    assert 0.10 <= m.value <= 0.22
+
+
+def test_pr_unavailable_when_no_p_wave():
+    fs = 360.0
+    sig = np.zeros(int(6 * 0.8 * fs))
+    for b in range(6):
+        r = int(b * 0.8 * fs) + 100
+        if r + 2 < len(sig):
+            sig[r] = 3.0
+            sig[r - 1] = sig[r + 1] = 1.0
+    m = pr_interval(sig, None, fs=fs)
+    assert m.value is None
+    assert m.quality == UNAVAILABLE
