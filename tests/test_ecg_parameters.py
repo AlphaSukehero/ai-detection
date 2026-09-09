@@ -99,3 +99,29 @@ def test_qt_returns_measurement_not_constant():
     sig = _beat_with_p_wave()
     m = qt_interval(sig, None, fs=360.0)
     assert m.value is None or m.value != 0.40
+
+
+from ecg.delineate import detect_r_peaks
+from ecg.parameters import st_deviation
+
+
+def test_st_normal_for_flat_baseline():
+    sig = _beat_with_p_wave()
+    m = st_deviation(sig, None, fs=360.0)
+    assert m.reason in {"Normal", "Elevated", "Depressed"}
+
+
+def test_st_elevation_detected_when_segment_raised():
+    fs = 360.0
+    sig = _beat_with_p_wave(fs=fs)
+    peaks = detect_r_peaks(sig, fs)
+    for peak in peaks:
+        j = int(peak) + int(0.04 * fs)
+        sig[j:j + int(0.10 * fs)] += 0.9      # lift the ST segment
+    m = st_deviation(sig, peaks, fs=fs)
+    assert m.reason == "Elevated"
+
+
+def test_st_unavailable_without_peaks():
+    m = st_deviation(np.zeros(1000), np.array([]), fs=360.0)
+    assert m.value is None

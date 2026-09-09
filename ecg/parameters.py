@@ -109,3 +109,42 @@ def qt_interval(signal, peaks=None, fs=360.0):
         return Measurement(None, UNAVAILABLE, "T wave end not resolvable")
     quality = OK if len(values) >= max(1, len(peaks) // 2) else LOW
     return Measurement(float(np.median(values)), quality)
+
+
+ST_OFFSET_S = 0.06           # J+60 ms, the conventional measurement point
+ST_THRESHOLD_MM = 1.0
+
+
+def st_deviation(signal, peaks=None, fs=360.0, mm_per_mv=10.0):
+    """Deviation at J+60 ms relative to the PR-segment isoelectric baseline."""
+    sig = np.asarray(signal, dtype=float).flatten()
+    if peaks is None:
+        peaks = detect_r_peaks(sig, fs)
+    if len(peaks) == 0:
+        return Measurement(None, UNAVAILABLE, "No R-peaks detected")
+
+    deviations = []
+    for peak in peaks:
+        onset, offset = qrs_bounds(sig, int(peak), fs)
+        p = p_onset(sig, onset, fs)
+        # PR segment is the flat stretch between P end and QRS onset; fall
+        # back to just before QRS onset when no P wave is present.
+        base_lo = p if p is not None else max(0, onset - int(0.04 * fs))
+        baseline = float(np.median(sig[base_lo:onset])) if onset > base_lo else 0.0
+        j = offset + int(ST_OFFSET_S * fs)
+        if j >= len(sig):
+            continue
+        # mm = mV x (mm per mV). Standard ECG gain is 10 mm/mV.
+        deviations.append((sig[j] - baseline) * mm_per_mv)
+
+    if not deviations:
+        return Measurement(None, UNAVAILABLE, "ST point beyond signal end")
+
+    dev_mm = float(np.median(deviations))
+    if dev_mm > ST_THRESHOLD_MM:
+        label = "Elevated"
+    elif dev_mm < -ST_THRESHOLD_MM:
+        label = "Depressed"
+    else:
+        label = "Normal"
+    return Measurement(dev_mm, OK, label)
