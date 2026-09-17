@@ -24,7 +24,7 @@ cards into `model/`.
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt
-.venv/bin/python app.py          # http://127.0.0.1:5050
+.venv/bin/python app.py          # http://127.0.0.1:5050 — all modules (ECG, EEG, MRI, satellite)
 ```
 
 `PORT` overrides the port. `UPLOAD_TTL_SECONDS` (default 86400) sets how long
@@ -143,7 +143,7 @@ U-Net trained on BraTS would make them real measurements.
 ## Layout
 
 ```
-app.py              Flask routes, model loading, per-domain prediction logic
+app.py              Flask site: ECG, EEG, MRI and satellite routes, model loading
 ecg/                Signal processing: digitize, delineate, parameters, quality
 ecg/beats.py        Beat segmentation + RR context, shared by training and app
 ecg/clinical.py     Structured reading: formula, range, verdict, precautions

@@ -17,12 +17,7 @@
                     <p>Convolutional Neural Network Medical Diagnostic Engine</p>
                 </div>
             </a>
-            <div class="nav-links">
-                <a href="/" class="nav-item">&larr; Home</a>
-                <a href="/ecg" class="nav-item">ECG</a>
-                <a href="/brain-tumor" class="nav-item active">Brain Tumor MRI</a>
-                <a href="/satellite" class="nav-item">Satellite</a>
-            </div>
+            {% with active = "/brain-tumor" %}{% include "_nav_links.html" %}{% endwith %}
         </nav>
 
         <div class="main-container">

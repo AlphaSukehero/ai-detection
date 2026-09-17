@@ -17,12 +17,7 @@
                     <p>Medical & Remote Sensing Intelligence</p>
                 </div>
             </a>
-            <div class="nav-links">
-                <a href="/" class="nav-item active">Dashboard</a>
-                <a href="/ecg" class="nav-item">ECG Analysis</a>
-                <a href="/brain-tumor" class="nav-item">Brain Tumor MRI</a>
-                <a href="/satellite" class="nav-item">Satellite Analysis</a>
-            </div>
+            {% with active = "/" %}{% include "_nav_links.html" %}{% endwith %}
         </nav>
 
         <!-- Hero Section -->
@@ -81,6 +76,21 @@
                 </div>
                 <a href="/ecg" class="btn-primary">
                     Launch ECG Dashboard &rarr;
+                </a>
+            </div>
+
+            <!-- EEG Card -->
+            <div class="dashboard-card eeg-card">
+                <div class="card-icon eeg">🧬</div>
+                <h2>EEG Signal Analysis</h2>
+                <p>Windowed wavelet-scalogram CNNs for seizure and cortical-slowing screening, with signal-derived spectral and spike measurements.</p>
+                <div class="features-list">
+                    <div class="feature-item"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>EDF / BDF / SET or Trace Image Input</span></div>
+                    <div class="feature-item"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>Episode Onset, Duration &amp; Burden</span></div>
+                    <div class="feature-item"><svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg><span>Band Power, Spectral Entropy, Spike Rate</span></div>
+                </div>
+                <a href="/eeg" class="btn-primary" style="background: var(--eeg-gradient);">
+                    Launch EEG Dashboard &rarr;
                 </a>
             </div>
 

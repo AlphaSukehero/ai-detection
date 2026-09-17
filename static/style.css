@@ -14,6 +14,7 @@
     --primary-gradient: linear-gradient(135deg, #6366f1, #8b5cf6);
     --ecg-gradient: linear-gradient(135deg, #ef4444, #f43f5e);
     --mri-gradient: linear-gradient(135deg, #8b5cf6, #d946ef);
+    --eeg-gradient: linear-gradient(135deg, #10b981, #14b8a6);
     --sat-gradient: linear-gradient(135deg, #3b82f6, #06b6d4);
     
     --text-primary: #f8fafc;
@@ -238,6 +239,7 @@ body {
 
 .card-icon.brain { background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3); }
 .card-icon.ecg { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); }
+.card-icon.eeg { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); }
 .card-icon.satellite { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3); }
 
 .dashboard-card h2 {
@@ -614,3 +616,11 @@ footer {
 }
 
 .report-stamp strong { color: var(--text-secondary); font-weight: 600; }
+
+/* Scrollable numeric table used by the EEG per-window parameters */
+.table-scroll { overflow-x: auto; max-height: 420px; border: 1px solid var(--border-color); border-radius: 12px; }
+.data-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.data-table th { position: sticky; top: 0; background: var(--bg-main); text-align: left; color: var(--text-muted); padding: 10px 8px; border-bottom: 1px solid var(--border-color); }
+.data-table td { padding: 8px; border-bottom: 1px solid rgba(148,163,184,0.12); font-variant-numeric: tabular-nums; }
+.eeg-steps { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 20px; }
+.eeg-steps span { font-size: 12px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border-color); color: var(--text-muted); }

@@ -1,0 +1,8 @@
+{# One navigation bar for every module page. Pass `active` = the current path. #}
+<div class="nav-links">
+    <a href="/" class="nav-item{% if active == '/' %} active{% endif %}">Dashboard</a>
+    <a href="/ecg" class="nav-item{% if active == '/ecg' %} active{% endif %}">ECG</a>
+    <a href="/eeg" class="nav-item{% if active == '/eeg' %} active{% endif %}">EEG</a>
+    <a href="/brain-tumor" class="nav-item{% if active == '/brain-tumor' %} active{% endif %}">Brain MRI</a>
+    <a href="/satellite" class="nav-item{% if active == '/satellite' %} active{% endif %}">Satellite</a>
+</div>

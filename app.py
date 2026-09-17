@@ -461,6 +461,7 @@ def create_ecg_plot(ecg_values, filename):
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp",
                     ".tif", ".tiff", ".dcm", ".dicom"}
 DICOM_EXTENSIONS = {".dcm", ".dicom"}
+EEG_SIGNAL_EXTENSIONS = {".edf", ".bdf", ".set", ".fif"}
 ECG_DATA_EXTENSIONS = {".csv", ".txt", ".dat", ".hea", ".xml", ".json"}
 
 
@@ -753,12 +754,14 @@ def spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi):
 # after an operator mistake. send_from_directory already blocks traversal;
 # this is about what is legitimately in the folder, not what is above it.
 _UPLOAD_PREFIXES = ("ecg_upload", "ecg_waveform_", "mri_upload_", "mri_analysis_",
-                    "mri_heatmap_", "mri_highlight_", "sat_upload_", "sat_analysis_")
+                    "mri_heatmap_", "mri_highlight_", "sat_upload_", "sat_analysis_",
+                    "eeg_upload_", "eeg_timeline_")
 # Derived from the extension sets the upload handlers actually accept, so a
 # new accepted format cannot become an unservable file through a missed edit
 # in a second hand-maintained list.
 _UPLOAD_EXTS = sorted(e.lstrip(".") for e in
-                      IMAGE_EXTENSIONS | ECG_DATA_EXTENSIONS | {"png"})
+                      IMAGE_EXTENSIONS | ECG_DATA_EXTENSIONS | EEG_SIGNAL_EXTENSIONS
+                      | {"png"})
 UPLOAD_NAME_RE = re.compile(
     "(?:%s)[0-9a-f]{8}\\.(?:%s)" % ("|".join(map(re.escape, _UPLOAD_PREFIXES)),
                                     "|".join(map(re.escape, _UPLOAD_EXTS)))
@@ -836,6 +839,11 @@ def ecg():
 def brain_tumor():
     return render_template("brain_tumor.html", patient={}, patient_fields=PATIENT_FIELDS,
                            gender_options=GENDER_OPTIONS)
+
+
+@app.route("/eeg")
+def eeg():
+    return _eeg_page()
 
 
 @app.route("/satellite")
@@ -1503,6 +1511,242 @@ def download_satellite_report():
     name = _slug(meta.get("survey_id"), _slug(meta.get("site_name"), "survey"))
     return send_file(buffer, as_attachment=True,
                      download_name=f"Satellite_Report_{name}.pdf",
+                     mimetype="application/pdf")
+
+
+# ------------------------------------------------------------
+# ANALYZE EEG
+# ------------------------------------------------------------
+
+EEG_TASKS = {"seizure": "Epileptiform / seizure activity",
+             "alzheimer": "Cortical slowing (dementia screen)"}
+_eeg_models = {}
+
+
+def get_eeg_model(task):
+    """Return (model, card) for an EEG head, or (None, None).
+
+    A missing model is normal: the measured parameters do not depend on one,
+    and the page says "not assessed" rather than "normal".
+    """
+    if task not in _eeg_models:
+        _eeg_models[task] = (None, None)
+        path = os.path.join("model", f"eeg_{task}.keras")
+        if TF_AVAILABLE and os.path.exists(path):
+            try:
+                _eeg_models[task] = (load_model(path, compile=False), load_card(path))
+            except Exception as e:
+                print(f"EEG model {task} unavailable: {e}")
+    return _eeg_models[task]
+
+
+def _eeg_to_signal(filepath, ext, duration):
+    """Upload -> (signal, fs, provenance). Raises on an unusable input."""
+    if ext in EEG_SIGNAL_EXTENSIONS:
+        from eeg.loaders import read_recording
+        signal, fs, names = read_recording(filepath)
+        # Channels are averaged: this pipeline localises in time, not space.
+        return np.mean(signal, axis=0), fs, f"{len(names)} channels at {fs:.0f} Hz"
+    from eeg.digitize import digitize
+    signal, fs, source = digitize(filepath, duration_s=duration, target_fs=128.0)
+    return signal, fs, f"digitised from image ({source})"
+
+
+def create_eeg_plot(result, bands, filename):
+    windows = result["windows"]
+    rows = 2 if result["model_used"] else 1
+    fig, axes = plt.subplots(rows, 1, figsize=(12, 3.2 * rows), squeeze=False)
+    ax = axes[0][0]
+    for b in bands:
+        ax.plot([w["rsp"][b] if w["rsp"] else np.nan for w in windows],
+                linewidth=1.2, label=b)
+    ax.set_title("Relative spectral power per window", fontsize=12, fontweight="bold")
+    ax.set_xlabel("Window")
+    ax.set_ylabel("RSP")
+    ax.legend(loc="upper right", fontsize=8, ncol=len(bands))
+    ax.grid(True, alpha=0.25, linestyle="--")
+    if result["model_used"]:
+        ax = axes[1][0]
+        ax.plot([w["score"] if w.get("score") is not None else np.nan
+                 for w in windows], color="#7c3aed", linewidth=1.2)
+        for e in result["episodes"]:
+            ax.axvspan(e["first_window"], e["last_window"], color="#ef4444", alpha=0.15)
+        ax.set_title("Anomaly score", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Window")
+        ax.set_ylabel("Score")
+        ax.grid(True, alpha=0.25, linestyle="--")
+    fig.tight_layout()
+    fig.savefig(os.path.join(app.config["UPLOAD_FOLDER"], filename), dpi=150)
+    plt.close(fig)
+
+
+def _eeg_page(**kw):
+    kw.setdefault("patient", {})
+    return render_template("eeg.html", patient_fields=PATIENT_FIELDS,
+                           gender_options=GENDER_OPTIONS, tasks=EEG_TASKS, **kw)
+
+
+@app.route("/analyze_eeg", methods=["POST"])
+def analyze_eeg():
+    from eeg.digitize import CalibrationError
+    from eeg.loaders import RecordingError
+    from eeg.inference import analyse_signal, summarise
+    from eeg.metrics import BANDS
+
+    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    if meta_errors:
+        return _eeg_page(error=" ".join(meta_errors), patient=entered)
+    patient = finalize_metadata(entered, PATIENT_FIELDS)
+
+    task = request.form.get("task", "seizure")
+    if task not in EEG_TASKS:
+        task = "seizure"
+    try:
+        duration = float(request.form.get("duration") or 0) or None
+    except ValueError:
+        duration = None
+
+    file = request.files.get("eeg_file")
+    if not file or file.filename == "":
+        return _eeg_page(error="Please upload an EEG recording or trace image.",
+                         patient=entered)
+    ext = os.path.splitext(os.path.basename(file.filename))[1].lower()
+    if ext not in EEG_SIGNAL_EXTENSIONS | (IMAGE_EXTENSIONS - DICOM_EXTENSIONS):
+        return _eeg_page(error=f"Unsupported file type '{ext}'.", patient=entered)
+    filepath = os.path.join(app.config["UPLOAD_FOLDER"],
+                            "eeg_upload_" + uuid.uuid4().hex[:8] + ext)
+    file.save(filepath)
+
+    try:
+        signal, fs, provenance = _eeg_to_signal(filepath, ext, duration)
+    except (CalibrationError, RecordingError) as e:
+        return _eeg_page(error=str(e), patient=entered)
+    except Exception as e:
+        print("EEG read error:", e)
+        return _eeg_page(error=f"Could not read this recording: {e}", patient=entered)
+
+    model, card = get_eeg_model(task)
+    result = analyse_signal(signal, fs, model=model, card=card)
+    if result["n_windows"] == 0:
+        return _eeg_page(error=result.get("error", "Nothing to analyse."),
+                         patient=entered)
+    summary = summarise(result)
+
+    plot_filename = "eeg_timeline_" + uuid.uuid4().hex[:8] + ".png"
+    create_eeg_plot(result, BANDS, plot_filename)
+
+    rows = []
+    for w in result["windows"]:
+        if w["rsp"] is None:
+            continue
+        rows.append({"t": round(w["start_s"], 1),
+                     "rsp": [round(w["rsp"][b], 3) for b in BANDS],
+                     "entropy": (round(w["spectral_entropy"], 3)
+                                 if w["spectral_entropy"] is not None else None),
+                     "spikes": round(w["spikes"]["rate_per_s"], 2),
+                     "score": (round(w["score"], 3)
+                               if w.get("score") is not None else None),
+                     "artifact": w["artifact"] or ""})
+
+    view = {
+        "task_label": EEG_TASKS[task],
+        "provenance": provenance,
+        "duration_s": round(len(signal) / fs, 1),
+        "model_used": result["model_used"],
+        "n_windows": result["n_windows"],
+        "artifact_windows": result.get("artifact_windows", 0),
+        "episodes": result["episodes"],
+        "summary": summary,
+        "bands": list(BANDS),
+        "rows": rows,
+        "card": card,
+        "timeline": plot_filename,
+    }
+    view["report"] = {
+        "task": view["task_label"], "source": provenance,
+        "duration_s": view["duration_s"], "model_used": view["model_used"],
+        "n_windows": view["n_windows"],
+        "artifact_windows": view["artifact_windows"],
+        "headline": summary["headline"],
+        "episodes_n": summary["episodes"],
+        "burden_pct": round(summary["burden_pct"], 1),
+        "band_means": {b: round(float(np.mean([r["rsp"][i] for r in rows])), 3)
+                       for i, b in enumerate(BANDS)} if rows else {},
+        "mean_spikes": (round(float(np.mean([r["spikes"] for r in rows])), 2)
+                        if rows else None),
+        "episodes": [{k: round(float(e[k]), 3) for k in
+                      ("onset_s", "offset_s", "duration_s", "peak_score",
+                       "spike_rate_per_s")} for e in result["episodes"]],
+    }
+    return _eeg_page(result=view, patient=patient,
+                     patient_rows=metadata_rows(patient, PATIENT_FIELDS))
+
+
+@app.route("/download_eeg_report", methods=["POST"])
+def download_eeg_report():
+    form = request.form
+    meta = _form_meta(form, PATIENT_FIELDS)
+    try:
+        r = json.loads(form.get("eeg_json") or "")
+        if not isinstance(r, dict):
+            raise ValueError
+    except ValueError:
+        r = {}
+
+    def v(key, fmt="{}"):
+        return fmt.format(r[key]) if r.get(key) is not None else NOT_PROVIDED
+
+    assessed = bool(r.get("model_used"))
+    sections = [
+        ("table", "1. Recording & Analysis", [
+            ("Attribute", "Value"),
+            ("Clinical Question", v("task")),
+            ("Input Source", v("source")),
+            ("Duration", v("duration_s", "{} s")),
+            ("Windows Analysed", v("n_windows")),
+            ("Artifact Windows", v("artifact_windows")),
+            ("Model Assessment", "Performed" if assessed else "Not assessed (no validated model)"),
+        ]),
+        ("table", "2. Findings", [
+            ("Measure", "Value"),
+            ("Detected Episodes", v("episodes_n") if assessed else "—"),
+            ("Anomaly Burden", v("burden_pct", "{}%") if assessed else "—"),
+            ("Mean Spike Rate", v("mean_spikes", "{} /s")),
+        ]),
+        ("text", "3. Summary", r.get("headline") or NOT_PROVIDED),
+    ]
+    if r.get("band_means"):
+        sections.append(("table", "4. Mean Relative Spectral Power",
+                         [("Band", "Share of 0.5–45 Hz power")]
+                         + [(str(b), str(x)) for b, x in r["band_means"].items()]))
+    if r.get("episodes"):
+        sections.append(("table", "5. Detected Episodes",
+                         [("Onset / Offset (s)", "Duration (s) · Peak · Spikes/s")]
+                         + [(f"{e['onset_s']:.1f} – {e['offset_s']:.1f}",
+                             f"{e['duration_s']:.1f} · {e['peak_score']:.3f} · "
+                             f"{e['spike_rate_per_s']:.2f}")
+                            for e in r["episodes"]]))
+
+    buffer = build_pdf_report(
+        title="EEG ANALYSIS REPORT",
+        subtitle="Windowed Spectral, Spike & Episode Analysis",
+        accent="#0d9488",
+        meta=meta,
+        meta_fields=PATIENT_FIELDS,
+        meta_heading="Patient & Study Details",
+        sections=sections,
+        disclaimer=(
+            "Disclaimer: Research prototype, not a medical device. All values are "
+            "model- or signal-derived. Channels are averaged, so findings are "
+            "localised in time, not in space. \"Not assessed\" does not mean normal. "
+            "Clinical review by a qualified neurologist is required."
+        ),
+        footer_text="Unified AI Diagnostic Platform — EEG Analysis"
+    )
+
+    name = _slug(meta.get("patient_id"), _slug(meta.get("patient_name"), "patient"))
+    return send_file(buffer, as_attachment=True,
+                     download_name=f"EEG_Report_{name}.pdf",
                      mimetype="application/pdf")
 
 

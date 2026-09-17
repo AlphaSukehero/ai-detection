@@ -17,12 +17,7 @@
                     <p>Multi-Spectral Remote Sensing & Terrain Classification</p>
                 </div>
             </a>
-            <div class="nav-links">
-                <a href="/" class="nav-item">&larr; Home</a>
-                <a href="/ecg" class="nav-item">ECG</a>
-                <a href="/brain-tumor" class="nav-item">Brain Tumor MRI</a>
-                <a href="/satellite" class="nav-item active">Satellite</a>
-            </div>
+            {% with active = "/satellite" %}{% include "_nav_links.html" %}{% endwith %}
         </nav>
 
         <div class="main-container">

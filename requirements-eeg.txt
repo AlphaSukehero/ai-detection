@@ -1,8 +1,7 @@
-# EEG subsystem only. The Flask app (requirements.txt) does not need these,
-# and neither does the ECG/MRI/satellite training set (requirements-train.txt).
+# EEG subsystem. Needed by the /eeg page (EDF/BDF/SET reading, scalograms);
+# the ECG/MRI/satellite pages and the training set do not need them.
 #
 #   .venv/bin/pip install -r requirements-eeg.txt
-#   .venv/bin/streamlit run eeg_app.py
+#   The EEG page is served by app.py at /eeg.
 mne==1.13.2
 PyWavelets==1.8.0
-streamlit==1.64.0

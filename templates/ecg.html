@@ -17,12 +17,7 @@
                     <p>AI-Powered Cardiac Rhythm Classification</p>
                 </div>
             </a>
-            <div class="nav-links">
-                <a href="/" class="nav-item">&larr; Home</a>
-                <a href="/ecg" class="nav-item active">ECG Analysis</a>
-                <a href="/brain-tumor" class="nav-item">Brain Tumor MRI</a>
-                <a href="/satellite" class="nav-item">Satellite</a>
-            </div>
+            {% with active = "/ecg" %}{% include "_nav_links.html" %}{% endwith %}
         </nav>
 
         <div class="main-container">
@@ -358,7 +353,7 @@
                     <input type="hidden" name="atrial_probability" value="{{ result.atrial_probability or '' }}">
                     <input type="hidden" name="classifier" value="{{ result.classifier or '' }}">
                     <input type="hidden" name="classifier_error" value="{{ result.classifier_error or '' }}">
-                    <input type="hidden" name="clinical_json" value="{{ result.clinical | tojson | e }}">
+                    <input type="hidden" name="clinical_json" value='{{ result.clinical | tojson }}'>
                     <input type="hidden" name="heart_rate" value="{{ result.heart_rate }}">
                     <input type="hidden" name="rr_interval" value="{{ result.rr_interval }}">
                     <input type="hidden" name="qrs_duration" value="{{ result.qrs_duration }}">
