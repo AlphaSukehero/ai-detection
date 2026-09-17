@@ -43,9 +43,11 @@ CHB_BASELINE_FILES = ["chb01_01.edf", "chb01_02.edf", "chb01_05.edf",
 # Balanced across diagnosis so the split cannot be won by guessing the
 # majority class. Group labels come from participants.tsv (A=Alzheimer's,
 # C=control, F=frontotemporal dementia); F is skipped to keep this binary.
+# Controls are sub-037..065 -- an earlier list took sub-066..071, which are F,
+# and prep silently dropped every one; tests now check these against the file.
 ADF_SUBJECTS = {
     "A": ["sub-001", "sub-002", "sub-003", "sub-004", "sub-005", "sub-006"],
-    "C": ["sub-066", "sub-067", "sub-068", "sub-069", "sub-070", "sub-071"],
+    "C": ["sub-037", "sub-038", "sub-039", "sub-040", "sub-041", "sub-042"],
 }
 
 

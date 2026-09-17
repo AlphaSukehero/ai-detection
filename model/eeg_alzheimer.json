@@ -1,0 +1,44 @@
+{
+  "task": "eeg_alzheimer",
+  "classes": [
+    "negative",
+    "positive"
+  ],
+  "input_shape": [
+    64,
+    64,
+    1
+  ],
+  "preprocessing": "scalogram_log_minmax",
+  "metrics": {
+    "sensitivity": 0.5225,
+    "precision": 0.7108843537414966,
+    "f1": 0.6023054755043228,
+    "roc_auc": 0.680178125,
+    "average_precision": 0.7654813353060851,
+    "test_positive_windows": 800,
+    "test_windows": 1600
+  },
+  "trained": "2026-09-17",
+  "window_s": 2.0,
+  "overlap": 0.5,
+  "fs": 128.0,
+  "split_by": "subject",
+  "train_sources": [
+    "sub-001",
+    "sub-002",
+    "sub-003",
+    "sub-004",
+    "sub-037",
+    "sub-038",
+    "sub-039",
+    "sub-040"
+  ],
+  "test_sources": [
+    "sub-005",
+    "sub-006",
+    "sub-041",
+    "sub-042"
+  ],
+  "label_note": "subject-level label applied to every window (weak labelling)"
+}

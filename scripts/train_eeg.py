@@ -40,6 +40,18 @@ def load(task, split):
     return d["X"], d["y"], d["source"]
 
 
+def shuffled(x, y, seed=SEED):
+    """One fixed permutation before fit.
+
+    Keras' validation_split takes the LAST fraction of the arrays without
+    shuffling. The prepared arrays are ordered by source recording, so that
+    tail can hold no positive window at all, and early stopping on val_auc
+    would then be steering on noise.
+    """
+    order = np.random.default_rng(seed).permutation(len(y))
+    return x[order], y[order]
+
+
 def build(input_shape):
     """Small CNN over the time-frequency image.
 
@@ -57,8 +69,11 @@ def build(input_shape):
         x = layers.BatchNormalization()(x)
         x = layers.ReLU()(x)
         x = layers.MaxPooling2D(2)(x)
-    x = layers.Lambda(lambda z: tf.reduce_mean(z, axis=2),
-                      name="pool_time")(x)          # (batch, freq, filters)
+    # Built-in layers rather than a Lambda: Keras refuses to load a Python
+    # lambda under its default safe_mode, which the dashboard uses.
+    freq, time, filters = x.shape[1:]
+    x = layers.AveragePooling2D((1, time), name="pool_time")(x)
+    x = layers.Reshape((freq, filters))(x)          # (batch, freq, filters)
     x = layers.Flatten()(x)
     x = layers.Dropout(0.4)(x)
     x = layers.Dense(64, activation="relu")(x)
@@ -87,6 +102,7 @@ def main():
     weights = class_weights(y_train)
     print("class weights (capped):", {k: round(v, 2) for k, v in weights.items()})
 
+    x_train, y_train = shuffled(x_train, y_train)
     model = build(x_train.shape[1:])
     model.fit(x_train, y_train, validation_split=0.15, epochs=EPOCHS,
               batch_size=64, class_weight=weights, verbose=2, shuffle=True,

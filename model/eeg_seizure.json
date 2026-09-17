@@ -1,0 +1,43 @@
+{
+  "task": "eeg_seizure",
+  "classes": [
+    "negative",
+    "positive"
+  ],
+  "input_shape": [
+    64,
+    64,
+    1
+  ],
+  "preprocessing": "scalogram_log_minmax",
+  "metrics": {
+    "sensitivity": 0.7386759581881533,
+    "precision": 0.20152091254752852,
+    "f1": 0.3166542195668409,
+    "roc_auc": 0.8958687534758084,
+    "average_precision": 0.40589276016574494,
+    "test_positive_windows": 287,
+    "test_windows": 6427
+  },
+  "trained": "2026-09-17",
+  "window_s": 2.0,
+  "overlap": 0.5,
+  "fs": 128.0,
+  "split_by": "recording",
+  "train_sources": [
+    "chb01_01.edf",
+    "chb01_02.edf",
+    "chb01_03.edf",
+    "chb01_04.edf",
+    "chb01_05.edf",
+    "chb01_15.edf",
+    "chb01_16.edf"
+  ],
+  "test_sources": [
+    "chb01_06.edf",
+    "chb01_18.edf",
+    "chb01_21.edf",
+    "chb01_26.edf"
+  ],
+  "label_note": "per-event annotations"
+}

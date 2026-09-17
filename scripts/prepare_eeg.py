@@ -56,7 +56,7 @@ NEG_FLOOR = 400
 # between runs.
 CHB_TEST_FILES = ["chb01_18.edf", "chb01_21.edf", "chb01_26.edf",
                   "chb01_06.edf"]
-ADF_TEST_SUBJECTS = ["sub-005", "sub-006", "sub-070", "sub-071"]
+ADF_TEST_SUBJECTS = ["sub-005", "sub-006", "sub-041", "sub-042"]
 
 
 def _resample(signal, fs, target=TARGET_FS):
@@ -182,6 +182,12 @@ def _save(task, buckets, rejections, split_info):
     for split, parts in buckets.items():
         if not parts:
             raise SystemExit(f"{task}: split {split!r} is empty")
+        classes = np.unique(np.concatenate([p[1] for p in parts]))
+        if len(classes) < 2:
+            # Precision is trivially perfect and AUC undefined on one class:
+            # a number that looks like a result and measures nothing.
+            raise SystemExit(f"{task}: split {split!r} holds one class only "
+                             f"({classes.tolist()})")
         X = np.concatenate([p[0] for p in parts])
         y = np.concatenate([p[1] for p in parts])
         src = np.concatenate([p[2] for p in parts])
