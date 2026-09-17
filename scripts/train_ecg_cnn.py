@@ -48,7 +48,7 @@ def main():
 
     present = np.unique(y_train)
     weights = compute_class_weight("balanced", classes=present, y=y_train)
-    class_weight = {int(c): float(w) for c, w in zip(present, weights)}
+    class_weight = {int(c): float(w) for c, w in zip(present, weights, strict=True)}
     print("class weights:", {CLASSES[k]: round(v, 2) for k, v in class_weight.items()})
 
     model = build()

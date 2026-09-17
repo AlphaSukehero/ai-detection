@@ -35,7 +35,7 @@ def beats_for(record):
     signal = rec.p_signal[:, lead].astype(np.float32)
 
     X, y = [], []
-    for sample, symbol in zip(ann.sample, ann.symbol):
+    for sample, symbol in zip(ann.sample, ann.symbol, strict=True):
         cls = AAMI.get(symbol)
         if cls is None:
             continue                      # rhythm/quality annotations, not beats

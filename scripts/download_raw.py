@@ -1,5 +1,8 @@
 """Download raw datasets into data/raw/. Idempotent: existing files are skipped."""
-import os, sys, json, urllib.request, hashlib
+import os
+import sys
+import json
+import urllib.request
 
 RAW = "data/raw"
 HF = "https://huggingface.co/api/datasets/blanchon/EuroSAT_RGB/parquet/default"

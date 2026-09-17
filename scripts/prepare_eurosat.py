@@ -23,7 +23,7 @@ def main():
         labels = table.column("label").to_pylist()
         names = table.column("filename").to_pylist() if has_names else None
 
-        for i, (img, label) in enumerate(zip(images, labels)):
+        for i, (img, label) in enumerate(zip(images, labels, strict=True)):
             cls = CLASSES[label]
             directory = os.path.join(OUT, out_split, cls)
             os.makedirs(directory, exist_ok=True)
