@@ -49,8 +49,12 @@ def _normalise(power):
     because absolute power is reported from eeg.metrics, computed on the
     signal, not read back off a picture.
     """
+    # The floor is relative to this image's peak. A fixed absolute floor
+    # breaks gain invariance: scaling the signal moves the peak but not the
+    # clipped minimum, so the same rhythm at two gains normalised differently.
+    peak = float(np.max(power)) if power.size else 0.0
     with np.errstate(divide="ignore"):
-        logp = np.log10(np.maximum(power, 1e-20))
+        logp = np.log10(np.maximum(power, peak * 1e-20))
     lo, hi = float(logp.min()), float(logp.max())
     if not np.isfinite(lo) or not np.isfinite(hi) or hi - lo < 1e-12:
         return np.zeros_like(logp)
