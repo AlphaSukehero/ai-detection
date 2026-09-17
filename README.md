@@ -5,7 +5,7 @@ generates a PDF report for each:
 
 | Page | Input | Model | Measured performance |
 |---|---|---|---|
-| `/ecg` | MIT-BIH CSV/TXT, or a photo of an ECG strip | 1D CNN, AAMI 5-class beat classifier | accuracy 0.614, **macro-F1 0.285** |
+| `/ecg` | MIT-BIH CSV/TXT, or a photo of an ECG strip | 1D CNN + RR context, AAMI 5-class beat classifier | accuracy 0.858, macro-F1 0.400 (0.667 over N/S/V) |
 | `/brain-tumor` | MRI slice (JPEG/PNG/DICOM) | VGG16 transfer, 4-class | accuracy 0.927, macro-F1 0.925 |
 | `/satellite` | Satellite scene (JPEG/PNG/TIFF) | EuroSAT CNN, 10-class → 4 display groups | accuracy 0.957, macro-F1 0.957 |
 
@@ -106,7 +106,28 @@ and a first run that way reached val_accuracy 0.26 with the model chasing
 noise. Weights are capped at 20 (`MAX_CLASS_WEIGHT`); capping raised epoch-1
 val_accuracy from 0.26 to 0.90.
 
-No feature engineering fixes 6 training examples. The card records both an
+**Measured effect** (inter-patient test split, before → after):
+
+| Class | F1 before | F1 after |
+|---|---|---|
+| N | 0.762 | **0.920** |
+| S | 0.097 | **0.261** |
+| V | 0.556 | **0.819** |
+| F | 0.008 | 0.002 |
+| Q | 0.003 | 0.000 |
+| accuracy | 0.614 | **0.858** |
+| macro-F1 (all) | 0.285 | **0.400** |
+| macro-F1 (N/S/V) | 0.472 | **0.667** |
+
+S recall rose from 0.10 to 0.46 — the prematurity signal the morphology-only
+model could not see. But S precision is 0.18: the model flags roughly 4,700
+beats to catch 849 real ones, so it is a sensitive screen, not a confident
+call. At F1 0.261 it stays below the app's 0.30 naming threshold and is still
+reported in the unnamed group.
+
+F and Q went to zero, as expected from 42 and 6 training beats. No feature
+engineering fixes that; capping the class weights stopped them corrupting the
+other three, which is most of why N and V improved. The card records both an
 all-class macro-F1 and one over the classes with real support (N, S, V), and
 the app refuses to name any class whose measured F1 is below 0.30 — so
 suppression is driven by what was measured, not by a hand-written list.
