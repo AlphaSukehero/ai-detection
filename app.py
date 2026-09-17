@@ -35,6 +35,7 @@ from mlkit.registry import RegistryError, load_card, validate_card
 from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
 from ecg.digitize import extract_leads
 from ecg.clinical import clinical_report
+from ecg.beats import segment_signal
 from reporting.pdf import build_pdf_report
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
@@ -259,22 +260,28 @@ def load_ecg_file(filepath):
     )
 
 
-def prepare_beats(ecg_values):
-    """Reshape a raw ECG trace into (n_beats, 280) fixed-length segments."""
-    if ecg_values.ndim == 2:
-        if ecg_values.shape[1] == 280:
-            return ecg_values
-        if ecg_values.shape[0] == 280:
-            return ecg_values.reshape(1, 280)
+def prepare_beats(ecg_values, fs=360.0):
+    """Segment a trace into R-peak-centred beats with their RR context.
 
-    flattened = ecg_values.flatten()
-    usable_length = (len(flattened) // 280) * 280
-
-    if usable_length == 0:
-        raise ValueError("The uploaded ECG file does not contain enough data for 280-sample segments.")
-
-    flattened = flattened[:usable_length]
-    return flattened.reshape(-1, 280)
+    Previously this chopped the signal into consecutive 280-sample blocks,
+    which bore no relation to how the model was trained: training windows are
+    centred on the R peak at index 100. Segmentation now comes from
+    ecg.beats, the same code scripts/prepare_ecg.py uses, so the two cannot
+    drift apart -- and detecting the peaks is what makes the RR features
+    available at inference at all.
+    """
+    signal = np.asarray(ecg_values, dtype=np.float32)
+    if signal.ndim == 2:
+        # A digitized multi-lead image arrives as (leads, samples); the model
+        # is trained on a single lead.
+        signal = signal[0] if signal.shape[0] < signal.shape[1] else signal[:, 0]
+    beats, rr = segment_signal(signal.ravel(), fs)
+    if len(beats) == 0:
+        raise ValueError(
+            "No heartbeats could be detected in this recording, so no beat "
+            "classification is possible."
+        )
+    return beats, rr
 
 
 ECG_BEAT_NAMES = {
@@ -307,6 +314,10 @@ def _reliable_ecg_classes(card):
     return {c for c, f1 in per_class.items() if float(f1) >= MIN_REPORTABLE_F1}
 
 
+class NoECGModelError(RuntimeError):
+    """No validated ECG classifier is installed."""
+
+
 def predict_ecg_cnn(X):
     """Classify each 280-sample beat with the AAMI 5-class 1D CNN.
 
@@ -317,14 +328,31 @@ def predict_ecg_cnn(X):
     if model is None:
         return None
 
-    beats = np.asarray(X, dtype=np.float32).reshape(-1, 280)
-    # beat_zscore: each beat is standardised on its own, exactly as in training.
+    beats, rr = X
+    beats = np.asarray(beats, dtype=np.float32).reshape(-1, 280)
+    # beat_zscore: each beat is standardised on its own, exactly as in
+    # training. ecg.beats already does this; repeating it is idempotent and
+    # keeps the guarantee local to the code that feeds the model.
     mean = beats.mean(axis=1, keepdims=True)
     std = beats.std(axis=1, keepdims=True)
     std[std == 0] = 1.0
     beats = (beats - mean) / std
 
-    preds = model.predict(beats[..., np.newaxis], verbose=0)
+    # A card declaring aux_inputs was trained with RR context; one without it
+    # is an older morphology-only checkpoint and is still served correctly.
+    # The card decides, never the calling code -- that is the whole point of
+    # the registry.
+    if card.get("aux_inputs", {}).get("rr"):
+        width = int(card["aux_inputs"]["rr"])
+        rr = np.asarray(rr, dtype=np.float32).reshape(-1, width)
+        if len(rr) != len(beats):
+            raise NoECGModelError(
+                "Beat and RR-context arrays disagree in length; refusing to "
+                "classify rather than pair a beat with another beat's rhythm."
+            )
+        preds = model.predict({"beat": beats[..., np.newaxis], "rr": rr}, verbose=0)
+    else:
+        preds = model.predict(beats[..., np.newaxis], verbose=0)
     classes = card["classes"]
     per_beat = preds.argmax(axis=1)
     mean_probs = preds.mean(axis=0)
@@ -389,10 +417,6 @@ def predict_ecg_cnn(X):
         "beats_analyzed": total,
         "method": "AAMI 5-class 1D CNN (MIT-BIH, inter-patient split)",
     }
-
-
-class NoECGModelError(RuntimeError):
-    """No validated ECG classifier is installed."""
 
 
 def predict_ecg(X):
@@ -907,20 +931,22 @@ def analyze_ecg():
             digitized = extract_leads(filepath)
             leads = digitized["leads"]
             ecg_values = leads.get("II", next(iter(leads.values())))
-            X = prepare_beats(ecg_values)
             # A digitized trace has one sample per pixel COLUMN, so its true
             # sampling rate is set by the paper speed: 25 mm/s x px/mm. It is
             # NOT the 360 Hz of the MIT-BIH CSV path. With no grid there is no
             # timebase at all; analyse() then reports everything unavailable.
+            # Derived before segmentation, because R-peak detection uses fs
+            # for its refractory window.
             px_per_mm = digitized["px_per_mm"]
             image_fs = fs_from_scale(px_per_mm) if px_per_mm is not None else 360.0
+            X = prepare_beats(ecg_values, fs=image_fs)
             report = analyse_ecg_parameters(leads, fs=image_fs,
                                             px_per_mm=px_per_mm,
                                             from_image=True)
             input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
         else:
             ecg_values = load_ecg_file(filepath)
-            X = prepare_beats(ecg_values)
+            X = prepare_beats(ecg_values, fs=360.0)
             report = analyse_ecg_parameters(ecg_values, fs=360.0)
             input_source = "ECG data file"
 

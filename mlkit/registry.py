@@ -19,8 +19,14 @@ def card_path(model_path):
     return os.path.splitext(model_path)[0] + ".json"
 
 
-def save_model_card(model_path, task, classes, input_shape, preprocessing, metrics):
-    """Write the sidecar describing a freshly trained model."""
+def save_model_card(model_path, task, classes, input_shape, preprocessing,
+                    metrics, extra=None):
+    """Write the sidecar describing a freshly trained model.
+
+    `extra` carries facts that do not fit the fixed fields -- auxiliary input
+    widths, per-class training support. It is recorded but not validated, so
+    adding a fact here can never turn an existing model into a refused load.
+    """
     card = {
         "task": task,
         "classes": list(classes),
@@ -29,6 +35,7 @@ def save_model_card(model_path, task, classes, input_shape, preprocessing, metri
         "metrics": dict(metrics),
         "trained": date.today().isoformat(),
     }
+    card.update(dict(extra or {}))
     with open(card_path(model_path), "w") as f:
         json.dump(card, f, indent=2)
     return card

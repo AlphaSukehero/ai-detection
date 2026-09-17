@@ -32,7 +32,7 @@ def test_predict_brain_tumor_raises_rather_than_guessing(monkeypatch):
 def test_predict_ecg_raises_rather_than_guessing(monkeypatch):
     monkeypatch.setattr(flask_app, "predict_ecg_cnn", lambda X: None)
     with pytest.raises(flask_app.NoECGModelError):
-        flask_app.predict_ecg(np.zeros((1, 280)))
+        flask_app.predict_ecg((np.zeros((1, 280)), np.ones((1, 4))))
 
 
 def test_no_quantum_circuit_remains():
@@ -101,7 +101,7 @@ def test_abnormal_strip_is_not_given_a_name_the_model_cannot_support(monkeypatch
 
     monkeypatch.setattr(flask_app, "get_ecg_model",
                         lambda: (FakeModel(), REAL_CARD))
-    res = flask_app.predict_ecg_cnn(np.zeros((4, 280)))
+    res = flask_app.predict_ecg_cnn((np.zeros((4, 280)), np.ones((4, 4))))
     assert res["prediction"] == "ABNORMAL"
     assert "cannot" in res["abnormal_type"].lower()
     assert "Supraventricular" not in res["abnormal_type"]
@@ -118,7 +118,7 @@ def test_reliable_classes_are_still_named(monkeypatch):
 
     monkeypatch.setattr(flask_app, "get_ecg_model",
                         lambda: (FakeModel(), REAL_CARD))
-    res = flask_app.predict_ecg_cnn(np.zeros((4, 280)))
+    res = flask_app.predict_ecg_cnn((np.zeros((4, 280)), np.ones((4, 4))))
     assert res["prediction"] == "ABNORMAL"
     assert res["abnormal_type"] == "Ventricular ectopic beat"
 
@@ -133,7 +133,7 @@ def test_suppressed_classes_are_pooled_not_deleted(monkeypatch):
 
     monkeypatch.setattr(flask_app, "get_ecg_model",
                         lambda: (FakeModel(), REAL_CARD))
-    dist = flask_app.predict_ecg_cnn(np.zeros((2, 280)))["beat_distribution"]
+    dist = flask_app.predict_ecg_cnn((np.zeros((2, 280)), np.ones((2, 4))))["beat_distribution"]
     assert "Other / not reliably classified" in dist
     assert float(dist["Other / not reliably classified"]) == pytest.approx(40.0, abs=0.1)
     assert not any("Fusion" in k or "Unclassifiable" in k for k in dist)

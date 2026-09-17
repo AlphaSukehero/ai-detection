@@ -78,19 +78,38 @@ these are enforced by tests in `tests/test_no_fabricated_output.py`:
   with an explicit timebase, and report "unavailable" when the timebase is
   unknown (a photo with no detectable grid). They are not constants.
 
-### Known limitation: the ECG model
+### The ECG model
 
-Macro-F1 0.285 is an honest **inter-patient** number (de Chazal DS1/DS2 split,
-balanced class weights) — not a bug, and not comparable to the ~99% figures
-that beat-wise splits produce. But it means the model reliably distinguishes
-only N and V.
+Trained on the de Chazal DS1/DS2 **inter-patient** split, so its numbers are
+not comparable to the ~99% figures a beat-wise split produces. Three things
+shape what it can do:
 
-The most promising fix is architectural rather than a hyperparameter:
-the model sees a z-scored 280-sample window centred on each beat, which
-discards RR-interval context. Supraventricular ectopic beats are *defined* by
-prematurity, so S is close to undetectable from that window alone. Adding
-pre-RR / post-RR / local-RR-ratio features is the standard remedy and the
-single biggest lever available here.
+**RR-interval context (two inputs).** The beat window is z-scored and centred
+on the R peak, which normalises away exactly what defines a supraventricular
+ectopic beat: an S beat is not primarily an odd shape, it is an *early* beat.
+Measured on the training split, mean pre-RR is 1.03x the record median for N
+and 0.66x for S. The model takes four RR ratios alongside the waveform. They
+are ratios against each record's own median rather than absolute seconds,
+which is what lets them transfer between patients.
+
+**Flatten, not global average pooling.** The previous architecture ended in
+`GlobalAveragePooling1D`, which is translation-invariant — it keeps *that* a
+deflection occurred and discards *where*. Measured against that checkpoint,
+shifting every test beat by 140 samples moved macro-F1 from 0.285 to 0.279:
+the model was very nearly blind to temporal structure, which is most of what
+separates these classes.
+
+**Capped class weights.** F and Q have 42 and 6 training beats — DS1/DS2
+excludes paced records by design, which is why Q is nearly empty. Fully
+balanced weighting gives Q's six beats the same total gradient as N's 36,913,
+and a first run that way reached val_accuracy 0.26 with the model chasing
+noise. Weights are capped at 20 (`MAX_CLASS_WEIGHT`); capping raised epoch-1
+val_accuracy from 0.26 to 0.90.
+
+No feature engineering fixes 6 training examples. The card records both an
+all-class macro-F1 and one over the classes with real support (N, S, V), and
+the app refuses to name any class whose measured F1 is below 0.30 — so
+suppression is driven by what was measured, not by a hand-written list.
 
 ### Known limitation: tumour morphometry
 
@@ -105,6 +124,8 @@ U-Net trained on BraTS would make them real measurements.
 ```
 app.py              Flask routes, model loading, per-domain prediction logic
 ecg/                Signal processing: digitize, delineate, parameters, quality
+ecg/beats.py        Beat segmentation + RR context, shared by training and app
+ecg/clinical.py     Structured reading: formula, range, verdict, precautions
 vision/gradcam.py   Saliency maps and the tumour geometry derived from them
 reporting/pdf.py    ReportLab document assembly
 webapp/metadata.py  Patient / survey metadata shared by pages and reports
