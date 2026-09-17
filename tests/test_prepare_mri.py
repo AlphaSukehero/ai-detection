@@ -20,7 +20,17 @@ def test_all_splits_present_and_every_class_represented():
 
 
 def test_checksums_match_files_on_disk():
-    for row in read_manifest(MANIFEST)[:50]:
+    """Unlike its siblings, this one needs the images themselves.
+
+    The manifest is tracked but dataset/ is gitignored, so on a fresh clone
+    the rows are present and the files they name are not. Skipping keeps the
+    three manifest-integrity tests above running in CI, where they are the
+    whole point, instead of taking the module down with them.
+    """
+    rows = read_manifest(MANIFEST)[:50]
+    if not rows or not os.path.exists(rows[0]["path"]):
+        pytest.skip("image files not present; run scripts/prepare_mri.py first")
+    for row in rows:
         assert os.path.exists(row["path"])
         assert sha256(row["path"]) == row["sha256"]
 
