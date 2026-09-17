@@ -1,0 +1,30 @@
+# Runtime dependencies for the Flask application (app.py).
+#
+#   python -m venv .venv
+#   .venv/bin/pip install -r requirements.txt
+#   .venv/bin/python app.py
+#
+# Training the models needs requirements-train.txt instead; the two overlap
+# but are installed separately so a deployment does not pull in the dataset
+# tooling (wfdb, kagglehub) it never uses.
+#
+# Versions are pinned. scikit-learn in particular must stay pinned: the
+# preprocessing objects saved alongside a model are pickled estimators, and
+# loading them under a different minor version produces silently wrong
+# transforms rather than an error.
+
+flask==3.1.3
+werkzeug==3.1.8
+tensorflow-cpu==2.21.0
+numpy==2.5.3
+pandas==3.0.5
+scipy==1.18.1
+scikit-learn==1.9.0
+pillow==12.3.0
+matplotlib==3.11.1
+reportlab==5.0.1
+
+# Optional, imported behind try/except in app.py. Without opencv the ECG
+# image-digitization path is disabled; without pydicom, .dcm MRI uploads are.
+opencv-python-headless==5.0.0.93
+pydicom==3.0.2

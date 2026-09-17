@@ -1,0 +1,21 @@
+# Lint settings shared by local runs and CI.
+line-length = 100
+target-version = "py312"
+
+[lint]
+# Start conservative: correctness-oriented rules that will not churn the
+# existing style. Tighten once the app.py split lands.
+select = ["E4", "E7", "E9", "F", "B"]
+ignore = [
+    "E741",  # ambiguous variable names; several are domain terms (l, I leads)
+]
+
+# Notebook cells are edited in Colab, where one-line imports are the norm and
+# reformatting churns the diff on every run.
+exclude = ["notebooks/*.ipynb", "create_samples.py"]
+
+[lint.per-file-ignores]
+# This codebase deliberately groups imports beside the code that uses them,
+# after the section comment that explains why the dependency is needed.
+"ecg/*" = ["E402"]
+"tests/*" = ["E402", "E702", "F401", "F811"]
