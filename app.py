@@ -3,14 +3,15 @@ from flask import (
     render_template,
     request,
     send_from_directory,
-    send_file
+    send_file,
+    abort
 )
 import os
-import io
+import re
+import json
+import time
 import uuid
 from datetime import datetime
-from html import escape
-import pickle
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -18,20 +19,8 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from scipy.signal import find_peaks
-import pennylane as qml
 from PIL import Image
 
-from reportlab.lib.pagesizes import A4
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle
-)
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 # Optional TensorFlow import with fallback
 try:
@@ -45,6 +34,17 @@ except Exception as e:
 from mlkit.registry import RegistryError, load_card, validate_card
 from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
 from ecg.digitize import extract_leads
+from ecg.clinical import clinical_report
+from reporting.pdf import build_pdf_report
+from webapp.metadata import (
+    NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
+    collect_metadata, finalize_metadata, metadata_rows, _clean_text,
+)
+from vision.gradcam import (
+    generate_gradcam_heatmap, create_gradcam_overlay,
+    create_tumor_region_highlight, calculate_tumor_area, calculate_tumor_size,
+    calculate_tumor_location, calculate_severity, calculate_spread,
+)
 
 # Optional DICOM support
 try:
@@ -81,105 +81,10 @@ app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload limit
 
 
 # ============================================================
-# PATIENT / STUDY METADATA
-# ============================================================
-
-GENDER_OPTIONS = ["Male", "Female", "Other", "Prefer not to say"]
-
-# Fields captured for clinical (ECG / MRI) studies.
-PATIENT_FIELDS = [
-    ("patient_name", "Patient Name"),
-    ("patient_id", "Patient ID / MRN"),
-    ("age", "Age"),
-    ("gender", "Gender"),
-    ("contact", "Contact Number"),
-    ("referring_physician", "Referring Physician"),
-    ("study_date", "Study Date"),
-    ("clinical_history", "Clinical History / Indication"),
-]
-
-# Fields captured for non-clinical satellite surveys.
-SURVEY_FIELDS = [
-    ("site_name", "Site / Area Name"),
-    ("survey_id", "Survey Reference ID"),
-    ("coordinates", "Coordinates (lat, lon)"),
-    ("capture_date", "Image Capture Date"),
-    ("sensor", "Sensor / Source"),
-    ("analyst", "Analyst"),
-    ("survey_notes", "Survey Notes"),
-]
-
-NOT_PROVIDED = "Not provided"
-
-
-def _clean_text(value, max_length=200):
-    """Trim, collapse whitespace and bound the length of a free-text field."""
-    if value is None:
-        return ""
-    text = " ".join(str(value).split())
-    return text[:max_length]
-
-
-def collect_metadata(form, fields):
-    """Read a metadata block from a submitted form.
-
-    Returns (values, errors). Values always contain every key so templates and
-    PDF builders can rely on them; blank entries stay empty here and are filled
-    in by finalize_metadata().
-    """
-    values = {}
-    errors = []
-
-    for key, label in fields:
-        limit = 1000 if key in ("clinical_history", "survey_notes") else 200
-        values[key] = _clean_text(form.get(key), limit)
-
-    if values.get("age"):
-        try:
-            age = int(float(values["age"]))
-            if not 0 <= age <= 130:
-                raise ValueError
-            values["age"] = str(age)
-        except (TypeError, ValueError):
-            errors.append("Age must be a whole number between 0 and 130.")
-            values["age"] = ""
-
-    if values.get("gender") and values["gender"] not in GENDER_OPTIONS:
-        errors.append("Please select a valid gender option.")
-        values["gender"] = ""
-
-    for date_key in ("study_date", "capture_date"):
-        if values.get(date_key):
-            try:
-                datetime.strptime(values[date_key], "%Y-%m-%d")
-            except ValueError:
-                errors.append("Date must be in YYYY-MM-DD format.")
-                values[date_key] = ""
-
-    return values, errors
-
-
-def finalize_metadata(values, fields):
-    """Fill blanks with a placeholder and attach report identity fields."""
-    finalized = {key: (values.get(key) or NOT_PROVIDED) for key, _ in fields}
-    finalized["report_id"] = "RPT-" + uuid.uuid4().hex[:10].upper()
-    finalized["generated_at"] = datetime.now().strftime("%d %b %Y, %H:%M:%S")
-    return finalized
-
-
-def metadata_rows(meta, fields):
-    """Ordered (label, value) pairs for rendering in templates and PDFs."""
-    return [(label, meta.get(key, NOT_PROVIDED)) for key, label in fields]
-
-
-# ============================================================
 # MODEL PATHS & GLOBALS
 # ============================================================
 
 MODEL_FOLDER = "model"
-
-QCNN_WEIGHTS_FILE = os.path.join(MODEL_FOLDER, "mitbih_qcnn_final_weights.npy")
-QCNN_PREPROCESSING_FILE = os.path.join(MODEL_FOLDER, "mitbih_qcnn_final_preprocessing.pkl")
 
 # Every model below is loaded through mlkit.registry, which refuses any
 # checkpoint whose sidecar card does not match the task, class order, input
@@ -203,66 +108,6 @@ SATELLITE_INPUT_SHAPE = [64, 64, 3]
 ECG_MODEL_FILE = os.path.join(MODEL_FOLDER, "ecg_cnn.keras")
 ECG_CARD_CLASSES = ["N", "S", "V", "F", "Q"]
 ECG_INPUT_SHAPE = [280, 1]
-
-
-# ============================================================
-# 1. QUANTUM CNN (QCNN) FOR ECG ANALYSIS
-# ============================================================
-
-n_qubits = 8
-dev = qml.device("default.qubit", wires=n_qubits)
-
-
-def conv_block(params, q1, q2):
-    qml.RY(params[0], wires=q1)
-    qml.RZ(params[1], wires=q1)
-    qml.RY(params[2], wires=q2)
-    qml.RZ(params[3], wires=q2)
-    qml.CNOT(wires=[q1, q2])
-    qml.RY(params[4], wires=q1)
-    qml.RY(params[5], wires=q2)
-    qml.CNOT(wires=[q2, q1])
-
-
-@qml.qnode(dev, interface="autograd")
-def qcnn_circuit(x, weights):
-    for i in range(n_qubits):
-        qml.RY(x[i], wires=i)
-        qml.RZ(x[i], wires=i)
-
-    for pair in range(4):
-        conv_block(weights[pair], 2 * pair, 2 * pair + 1)
-
-    for pair in range(3):
-        conv_block(weights[4 + pair], 2 * pair + 1, 2 * pair + 2)
-
-    qml.CNOT(wires=[0, 1])
-    qml.CNOT(wires=[2, 3])
-    qml.CNOT(wires=[4, 5])
-    qml.CNOT(wires=[6, 7])
-
-    for i in range(n_qubits):
-        qml.RY(weights[7 + i, 0], wires=i)
-        qml.RZ(weights[7 + i, 1], wires=i)
-
-    return qml.expval(qml.PauliZ(0))
-
-
-# Load QCNN Weights
-qcnn_weights = None
-qcnn_preprocessing = None
-
-try:
-    if os.path.exists(QCNN_WEIGHTS_FILE):
-        qcnn_weights = np.load(QCNN_WEIGHTS_FILE)
-        print("QCNN weights loaded successfully. Shape:", qcnn_weights.shape)
-
-    if os.path.exists(QCNN_PREPROCESSING_FILE):
-        with open(QCNN_PREPROCESSING_FILE, "rb") as f:
-            qcnn_preprocessing = pickle.load(f)
-        print("QCNN preprocessing loaded successfully.")
-except Exception as e:
-    print("WARNING: QCNN model could not be loaded:", e)
 
 
 _brain_tumor_model = None
@@ -311,14 +156,37 @@ def preprocess_mri(img_array, preprocessing="vgg16_preprocess_input"):
     return batch / 255.0
 
 
+def _card_macro_f1(path):
+    """Macro-F1 recorded on a candidate's card, or -1 if it has none.
+
+    Ranking key for model selection. -1 rather than 0 so an unmeasured model
+    always loses to a measured one, however badly the measured one scores:
+    an unknown score is not evidence of a good one.
+    """
+    try:
+        return float(load_card(path).get("metrics", {}).get("macro_f1", -1.0))
+    except (RegistryError, ValueError, TypeError):
+        return -1.0
+
+
 def get_brain_tumor_model():
-    """Return (model, card) for the best available validated MRI model."""
+    """Return (model, card) for the best-measured validated MRI model.
+
+    Candidates are ranked by the macro-F1 on their own cards, not by their
+    position in MRI_MODEL_CANDIDATES. Hardcoded order is a standing hazard:
+    it silently serves whichever checkpoint someone happened to list first,
+    and the list gives no signal when a retrain makes the other one better.
+    Macro-F1 rather than accuracy because these classes are imbalanced.
+    """
     global _brain_tumor_model
     if _brain_tumor_model is None:
         _brain_tumor_model = (None, None)
-        for path, shape, prep in MRI_MODEL_CANDIDATES:
+        ranked = sorted(MRI_MODEL_CANDIDATES,
+                        key=lambda c: _card_macro_f1(c[0]), reverse=True)
+        for path, shape, prep in ranked:
             model, card = _load_validated(path, "mri", MRI_CARD_CLASSES, shape, prep)
             if model is not None:
+                print(f"Selected {path} (macro_f1={_card_macro_f1(path):.4f})")
                 _brain_tumor_model = (model, card)
                 break
     return _brain_tumor_model
@@ -391,7 +259,8 @@ def load_ecg_file(filepath):
     )
 
 
-def prepare_qcnn_input(ecg_values):
+def prepare_beats(ecg_values):
+    """Reshape a raw ECG trace into (n_beats, 280) fixed-length segments."""
     if ecg_values.ndim == 2:
         if ecg_values.shape[1] == 280:
             return ecg_values
@@ -408,38 +277,6 @@ def prepare_qcnn_input(ecg_values):
     return flattened.reshape(-1, 280)
 
 
-def apply_saved_preprocessing(X):
-    if qcnn_preprocessing is None:
-        # Fallback normalization to [0, pi]
-        X_min = X.min(axis=0, keepdims=True)
-        X_max = X.max(axis=0, keepdims=True)
-        denom = X_max - X_min
-        denom[denom == 0] = 1
-        return ((X - X_min) / denom) * np.pi
-
-    pca = None
-    scaler = None
-
-    if isinstance(qcnn_preprocessing, dict):
-        for key, value in qcnn_preprocessing.items():
-            if hasattr(value, "transform"):
-                cname = value.__class__.__name__.lower()
-                if "pca" in cname:
-                    pca = value
-                elif "scaler" in cname or "minmax" in cname:
-                    scaler = value
-
-    X_reduced = pca.transform(X) if pca is not None else X
-    if scaler is not None:
-        return scaler.transform(X_reduced)
-
-    X_min = X_reduced.min(axis=0, keepdims=True)
-    X_max = X_reduced.max(axis=0, keepdims=True)
-    denom = X_max - X_min
-    denom[denom == 0] = 1
-    return ((X_reduced - X_min) / denom) * np.pi
-
-
 ECG_BEAT_NAMES = {
     "N": "Normal beat",
     "S": "Supraventricular ectopic beat",
@@ -449,11 +286,32 @@ ECG_BEAT_NAMES = {
 }
 
 
+# A class whose measured F1 falls below this is not named in any output. The
+# threshold is a judgement call, not a standard: it is set where a label stops
+# being better than a coin-flip guess weighted by prevalence. It lives here,
+# next to the code that applies it, so changing it is a visible decision.
+MIN_REPORTABLE_F1 = 0.30
+
+
+def _reliable_ecg_classes(card):
+    """Classes this model's own card shows it can discriminate.
+
+    Falls back to every class when a card records no per-class F1, because an
+    older card means unmeasured, and suppressing everything would be a worse
+    failure than the status quo -- but it is logged so it is not silent.
+    """
+    per_class = (card or {}).get("metrics", {}).get("per_class_f1")
+    if not per_class:
+        print("ECG card records no per-class F1; reporting all classes unfiltered.")
+        return set(card.get("classes", []))
+    return {c for c, f1 in per_class.items() if float(f1) >= MIN_REPORTABLE_F1}
+
+
 def predict_ecg_cnn(X):
     """Classify each 280-sample beat with the AAMI 5-class 1D CNN.
 
-    Returns None when no validated model is installed, so predict_ecg() can
-    fall back to the QCNN path.
+    Returns None when no validated model is installed. There is no fallback
+    classifier: an ECG with no model behind it gets no prediction at all.
     """
     model, card = get_ecg_model()
     if model is None:
@@ -476,81 +334,84 @@ def predict_ecg_cnn(X):
     abnormal = total - counts.get("N", 0)
     abnormal_fraction = abnormal / total
 
-    # A strip is called abnormal when any non-normal beat class dominates the
-    # averaged distribution, or when abnormal beats are not merely incidental.
+    # Which class names this model has earned the right to say. A class whose
+    # measured F1 is near zero carries no information, so naming it as the
+    # finding would be an invented specificity: the current card records
+    # F=0.008 and Q=0.003, meaning those labels are essentially never right.
+    # Such beats still count as "not normal" -- that part the model can do --
+    # they just are not given a name.
+    reliable = _reliable_ecg_classes(card)
+
     top_idx = int(np.argmax(mean_probs))
     top_class = classes[top_idx]
     if top_class == "N" and abnormal_fraction < 0.10:
         prediction, abnormal_type = "NORMAL", "No ectopic beats detected"
         confidence = float(mean_probs[classes.index("N")]) * 100.0
     else:
-        worst = max((c for c in classes if c != "N"), key=lambda c: counts[c])
+        ectopic = [c for c in classes if c != "N"]
+        # A reliable class with no beats assigned to it is not a finding: the
+        # ectopy is real but belongs to a class this model cannot name.
+        nameable = [c for c in ectopic if c in reliable and counts[c] > 0]
         prediction = "ABNORMAL"
-        abnormal_type = ECG_BEAT_NAMES[worst]
-        confidence = max(abnormal_fraction, float(mean_probs[classes.index(worst)])) * 100.0
+        if nameable:
+            worst = max(nameable, key=lambda c: counts[c])
+            abnormal_type = ECG_BEAT_NAMES[worst]
+            confidence = max(abnormal_fraction,
+                             float(mean_probs[classes.index(worst)])) * 100.0
+        else:
+            worst = max(ectopic, key=lambda c: counts[c])
+            abnormal_type = ("Non-normal beats detected; this model cannot "
+                             "reliably identify which type")
+            confidence = abnormal_fraction * 100.0
+
+    # The per-class distribution is shown only for classes the model can
+    # actually discriminate; the rest are reported as one unnamed group so the
+    # page never prints a precise-looking percentage against a class with an
+    # F1 of 0.003.
+    distribution = {ECG_BEAT_NAMES[c]: f"{float(mean_probs[i]) * 100:.2f}"
+                    for i, c in enumerate(classes) if c in reliable}
+    unreliable_mass = sum(float(mean_probs[i]) for i, c in enumerate(classes)
+                          if c not in reliable)
+    if unreliable_mass > 0:
+        distribution["Other / not reliably classified"] = f"{unreliable_mass * 100:.2f}"
+
+    s_probability = (f"{float(mean_probs[classes.index('S')]) * 100:.2f}"
+                     if "S" in reliable else None)
 
     return {
         "prediction": prediction,
         "abnormal_type": abnormal_type,
         "confidence": f"{confidence:.2f}",
-        "atrial_probability": f"{float(mean_probs[classes.index('S')]) * 100:.2f}",
+        "atrial_probability": s_probability,
         "beat_predictions": preds.max(axis=1),
         "beat_counts": counts,
-        "beat_distribution": {ECG_BEAT_NAMES[c]: f"{float(mean_probs[i]) * 100:.2f}"
-                              for i, c in enumerate(classes)},
+        "beat_distribution": distribution,
         "beats_analyzed": total,
         "method": "AAMI 5-class 1D CNN (MIT-BIH, inter-patient split)",
     }
 
 
+class NoECGModelError(RuntimeError):
+    """No validated ECG classifier is installed."""
+
+
 def predict_ecg(X):
-    cnn_result = predict_ecg_cnn(X)
-    if cnn_result is not None:
-        return cnn_result
+    """Classify a strip, or refuse.
 
-    if qcnn_weights is None:
-        # Fallback heuristic prediction if weights file missing
-        std_val = float(np.std(X))
-        prob = float(1.0 / (1.0 + np.exp(-std_val)))
-        return {
-            "prediction": "NORMAL" if prob < 0.5 else "ABNORMAL",
-            "abnormal_type": "No atrial abnormality detected" if prob < 0.5 else "Atrial Abnormality",
-            "confidence": f"{abs(prob - 0.5) * 200:.2f}",
-            "atrial_probability": f"{prob * 100:.2f}",
-            "beat_predictions": np.array([prob])
-        }
-
-    processed = apply_saved_preprocessing(X)
-    predictions = []
-
-    for sample in processed:
-        sample = np.asarray(sample, dtype=float)[:8]
-        if len(sample) < 8:
-            sample = np.pad(sample, (0, 8 - len(sample)))
-
-        qout = float(qcnn_circuit(sample, qcnn_weights))
-        prob = max(0.0, min(1.0, (1.0 - qout) / 2.0))
-        predictions.append(prob)
-
-    predictions = np.asarray(predictions)
-    mean_prob = float(np.mean(predictions))
-
-    if mean_prob >= 0.5:
-        prediction = "ABNORMAL"
-        abnormal_type = "Atrial Abnormality"
-        confidence = mean_prob * 100
-    else:
-        prediction = "NORMAL"
-        abnormal_type = "No atrial abnormality detected"
-        confidence = (1.0 - mean_prob) * 100
-
-    return {
-        "prediction": prediction,
-        "abnormal_type": abnormal_type,
-        "confidence": f"{confidence:.2f}",
-        "atrial_probability": f"{mean_prob * 100:.2f}",
-        "beat_predictions": predictions
-    }
+    Previously this fell back to an 8-qubit QCNN whose preprocessing was an
+    unpickled PCA + MinMaxScaler fitted under a different scikit-learn minor
+    version, and below that to sigmoid(std(X)) -- a number with no diagnostic
+    meaning presented as a confidence. Both produced clinical-sounding output
+    from nothing. A missing model is now an error, not a guess.
+    """
+    result = predict_ecg_cnn(X)
+    if result is None:
+        raise NoECGModelError(
+            "No validated ECG classifier is installed, so no beat "
+            "classification can be reported. Rhythm and interval measurements "
+            "below are computed from the signal and remain valid."
+        )
+    return result
 
 
 def create_ecg_plot(ecg_values, filename):
@@ -621,7 +482,8 @@ def load_image_rgb(image_path):
         img.load()
         return img.convert("RGB")
     except Exception as e:
-        raise ValueError(f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}")
+        raise ValueError(
+            f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}") from e
 
 
 # ============================================================
@@ -636,257 +498,8 @@ MRI_CLASSES = {
 }
 
 
-# ============================================================
-# GRAD-CAM HELPER FUNCTIONS
-# ============================================================
-
-def generate_gradcam_heatmap(model, image_array, predicted_class):
-    """Generate a Grad-CAM heatmap for the predicted class."""
-    try:
-        import tensorflow as tf
-        
-        # Recursively find the last conv layer (including inside Functional sub-models like vgg16)
-        def find_last_conv(layer):
-            # If this layer has sub-layers, recurse into them
-            if hasattr(layer, 'layers') and len(layer.layers) > 0:
-                for sub in reversed(layer.layers):
-                    result = find_last_conv(sub)
-                    if result is not None:
-                        return result
-            # Check if this is a Conv2D layer
-            if 'conv' in layer.__class__.__name__.lower():
-                return layer
-            return None
-        
-        # Find the inner model that contains the conv layers
-        inner_model = model
-        last_conv_layer = None
-        
-        for layer in reversed(model.layers):
-            if hasattr(layer, 'layers') and len(layer.layers) > 0:
-                # This is a Functional sub-model (like vgg16)
-                for sub in reversed(layer.layers):
-                    conv = find_last_conv(sub)
-                    if conv is not None:
-                        last_conv_layer = conv
-                        inner_model = layer
-                        break
-            else:
-                conv = find_last_conv(layer)
-                if conv is not None:
-                    last_conv_layer = conv
-                    break
-        
-        if last_conv_layer is None:
-            return generate_gradient_heatmap(model, image_array, predicted_class)
-        
-        # Build a sub-model from the inner model's input to the conv layer and output
-        # The inner model like vgg16 has its own input
-        grad_model = tf.keras.models.Model(
-            inputs=inner_model.input,
-            outputs=[last_conv_layer.output, inner_model.output]
-        )
-        
-        with tf.GradientTape() as tape:
-            conv_outputs, predictions = grad_model(image_array)
-            loss = predictions[:, predicted_class]
-        
-        # Get gradients
-        grads = tape.gradient(loss, conv_outputs)
-        
-        if grads is None:
-            return generate_gradient_heatmap(model, image_array, predicted_class)
-        
-        # Global average pooling of gradients
-        pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
-        
-        # Weight the channels by the gradients
-        conv_outputs = conv_outputs[0]
-        heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-        heatmap = tf.squeeze(heatmap)
-        
-        # ReLU
-        heatmap = tf.maximum(heatmap, 0)
-        
-        # Normalize
-        heatmap_max = tf.reduce_max(heatmap)
-        if heatmap_max > 0:
-            heatmap = heatmap / heatmap_max
-        
-        # Convert to numpy
-        heatmap_np = heatmap.numpy()
-        
-        # Resize to 224x224
-        if cv2 is not None:
-            heatmap_np = cv2.resize(heatmap_np, (224, 224))
-        else:
-            from PIL import Image as PILImage
-            heatmap_img = PILImage.fromarray((heatmap_np * 255).astype(np.uint8))
-            heatmap_img = heatmap_img.resize((224, 224), PILImage.BILINEAR)
-            heatmap_np = np.array(heatmap_img) / 255.0
-        
-        return heatmap_np
-        
-    except Exception as e:
-        print(f"Grad-CAM generation failed: {e}")
-        return generate_gradient_heatmap(model, image_array, predicted_class)
-
-
-def generate_gradient_heatmap(model, image_array, predicted_class):
-    """Fallback: Generate gradient-based heatmap when Grad-CAM fails."""
-    try:
-        import tensorflow as tf
-        
-        # Ensure the input array has the right shape for the model (Batch, H, W, C)
-        if image_array.ndim == 3:
-            input_tensor = tf.convert_to_tensor(image_array[None, ...])
-        else:
-            input_tensor = tf.convert_to_tensor(image_array)
-        
-        with tf.GradientTape() as tape:
-            tape.watch(input_tensor)
-            predictions = model(input_tensor)
-            loss = predictions[:, predicted_class]
-        
-        grads = tape.gradient(loss, input_tensor)
-        
-        if grads is None:
-            return None
-        
-        # Take absolute value and mean across channels
-        grads_np = grads.numpy()[0]
-        if grads_np.ndim == 3:
-            heatmap = np.mean(np.abs(grads_np), axis=-1)
-        else:
-            heatmap = np.abs(grads_np)
-        
-        # Normalize
-        heatmap_max = heatmap.max()
-        if heatmap_max > 0:
-            heatmap = heatmap / heatmap_max
-        
-        return heatmap
-        
-    except Exception as e:
-        print(f"Gradient heatmap generation failed: {e}")
-        return None
-
-
-def create_gradcam_overlay(original_image, heatmap, alpha=0.45):
-    """Create a heatmap overlay on the original image."""
-    if heatmap is None:
-        return original_image
-    
-    # Convert original image to numpy array
-    original_np = np.array(original_image.resize((224, 224)))
-    
-    # Apply colormap to heatmap
-    heatmap_uint8 = (heatmap * 255).astype(np.uint8)
-    
-    if cv2 is not None:
-        heatmap_colored = cv2.applyColorMap(heatmap_uint8, cv2.COLORMAP_JET)
-        heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
-    else:
-        # Fallback without OpenCV
-        heatmap_colored = np.stack([heatmap_uint8] * 3, axis=-1)
-        # Apply red channel emphasis
-        heatmap_colored[:, :, 0] = heatmap_uint8
-        heatmap_colored[:, :, 1] = 0
-        heatmap_colored[:, :, 2] = 255 - heatmap_uint8
-    
-    # Blend
-    overlay = cv2.addWeighted(original_np, 1 - alpha, heatmap_colored, alpha, 0) if cv2 is not None else \
-        (original_np * (1 - alpha) + heatmap_colored * alpha).astype(np.uint8)
-    
-    return Image.fromarray(overlay)
-
-
-def create_tumor_region_highlight(original_image, heatmap, threshold_percentile=90):
-    """Create a highlighted tumor region image."""
-    if heatmap is None:
-        return original_image
-    
-    original_np = np.array(original_image.resize((224, 224)))
-    
-    # Threshold the heatmap
-    threshold = np.percentile(heatmap, threshold_percentile)
-    mask = (heatmap >= threshold).astype(np.uint8) * 255
-    
-    # Clean up mask
-    if cv2 is not None:
-        kernel = np.ones((5, 5), np.uint8)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-        mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-    
-    # Create red overlay
-    overlay = original_np.copy()
-    overlay[mask > 0] = [255, 0, 0]  # Red highlight
-    
-    # Blend
-    highlighted = cv2.addWeighted(original_np, 0.65, overlay, 0.35, 0) if cv2 is not None else \
-        (original_np * 0.65 + overlay * 0.35).astype(np.uint8)
-    
-    # Draw contour if OpenCV available
-    if cv2 is not None:
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if contours:
-            largest_contour = max(contours, key=cv2.contourArea)
-            cv2.drawContours(highlighted, [largest_contour], -1, (255, 255, 0), 2)  # Yellow boundary
-    
-    return Image.fromarray(highlighted)
-
-
-def calculate_tumor_area(mask):
-    """Calculate tumor area as percentage of image."""
-    active_pixels = np.sum(mask > 0)
-    total_pixels = mask.shape[0] * mask.shape[1]
-    return float(active_pixels / total_pixels * 100)
-
-
-def calculate_tumor_size(contour):
-    """Calculate tumor bounding box size."""
-    if contour is None or not CV2_AVAILABLE:
-        return 0, 0
-    x, y, width, height = cv2.boundingRect(contour)
-    return int(width), int(height)
-
-
-def calculate_tumor_location(contour):
-    """Calculate tumor location description."""
-    if contour is None or not CV2_AVAILABLE:
-        return "Not available"
-    
-    moments = cv2.moments(contour)
-    if moments["m00"] == 0:
-        return "Not available"
-    
-    center_x = moments["m10"] / moments["m00"]
-    center_y = moments["m01"] / moments["m00"]
-    
-    horizontal = "Left" if center_x < 74 else ("Central" if center_x < 150 else "Right")
-    vertical = "Upper" if center_y < 74 else ("Middle" if center_y < 150 else "Lower")
-    
-    return f"{horizontal} {vertical} region"
-
-
-def calculate_severity(area):
-    """Calculate severity based on area."""
-    if area < 5:
-        return "Low"
-    elif area < 15:
-        return "Moderate"
-    else:
-        return "High"
-
-
-def calculate_spread(area):
-    """Calculate spread based on area."""
-    if area < 5:
-        return "Limited"
-    elif area < 15:
-        return "Moderate"
-    else:
-        return "Extensive"
+class NoMRIModelError(RuntimeError):
+    """No validated brain-tumor classifier could produce a prediction."""
 
 
 def predict_brain_tumor(image_path):
@@ -897,18 +510,21 @@ def predict_brain_tumor(image_path):
     size = tuple(card["input_shape"][:2]) if card else (224, 224)
     img_array = np.array(img.resize(size), dtype=np.float32)
 
-    if model is not None:
-        try:
-            input_tensor = preprocess_mri(img_array, card["preprocessing"])
-            preds = model.predict(input_tensor)[0]
-            top_idx = int(np.argmax(preds))
-            confidence = float(preds[top_idx]) * 100.0
-            probs = {MRI_CLASSES[i]: float(preds[i]) * 100.0 for i in range(len(preds))}
-        except Exception as e:
-            print("Model prediction error, using color distribution heuristic fallback:", e)
-            top_idx, confidence, probs = fallback_mri_analysis(img_array)
-    else:
-        top_idx, confidence, probs = fallback_mri_analysis(img_array)
+    if model is None:
+        raise NoMRIModelError(
+            "No validated brain-tumor model is installed, so no classification "
+            "can be reported."
+        )
+    try:
+        input_tensor = preprocess_mri(img_array, card["preprocessing"])
+        preds = model.predict(input_tensor)[0]
+    except Exception as e:
+        raise NoMRIModelError(
+            f"The brain-tumor model failed to produce a prediction ({e})."
+        ) from e
+    top_idx = int(np.argmax(preds))
+    confidence = float(preds[top_idx]) * 100.0
+    probs = {MRI_CLASSES[i]: float(preds[i]) * 100.0 for i in range(len(preds))}
 
     top_class = MRI_CLASSES[top_idx]
 
@@ -946,31 +562,6 @@ def predict_brain_tumor(image_path):
         "findings": info["findings"],
         "recommendation": info["recommendation"]
     }
-
-
-def fallback_mri_analysis(img_array):
-    # Rule-based visual feature extraction for demonstration/fallback
-    mean_val = np.mean(img_array)
-    std_val = np.std(img_array)
-    center_crop = img_array[50:170, 50:170]
-    center_intensity = np.mean(center_crop)
-
-    if center_intensity > mean_val + 15:
-        top_idx = 0  # Glioma
-        probs = [78.4, 11.2, 4.3, 6.1]
-    elif std_val > 55:
-        top_idx = 1  # Meningioma
-        probs = [12.1, 74.5, 5.2, 8.2]
-    elif center_intensity < mean_val - 10:
-        top_idx = 3  # Pituitary
-        probs = [8.1, 9.3, 6.4, 76.2]
-    else:
-        top_idx = 2  # No Tumor
-        probs = [2.5, 3.1, 91.8, 2.6]
-
-    confidence = probs[top_idx]
-    probs_dict = {MRI_CLASSES[i]: probs[i] for i in range(4)}
-    return top_idx, confidence, probs_dict
 
 
 # ============================================================
@@ -1127,6 +718,85 @@ def spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi):
 # ROUTE HANDLERS
 # ============================================================
 
+# ------------------------------------------------------------
+# UPLOAD DIRECTORY POLICY
+# ------------------------------------------------------------
+
+# Every file this app writes into uploads/ is named by one of the templates
+# below: a fixed prefix, a uuid4 hex stem, and a known extension. Serving is
+# restricted to that shape so /uploads/<filename> can only ever return a file
+# this app generated -- not, say, a .py or .keras that shares the directory
+# after an operator mistake. send_from_directory already blocks traversal;
+# this is about what is legitimately in the folder, not what is above it.
+_UPLOAD_PREFIXES = ("ecg_upload", "ecg_waveform_", "mri_upload_", "mri_analysis_",
+                    "mri_heatmap_", "mri_highlight_", "sat_upload_", "sat_analysis_")
+# Derived from the extension sets the upload handlers actually accept, so a
+# new accepted format cannot become an unservable file through a missed edit
+# in a second hand-maintained list.
+_UPLOAD_EXTS = sorted(e.lstrip(".") for e in
+                      IMAGE_EXTENSIONS | ECG_DATA_EXTENSIONS | {"png"})
+UPLOAD_NAME_RE = re.compile(
+    "(?:%s)[0-9a-f]{8}\\.(?:%s)" % ("|".join(map(re.escape, _UPLOAD_PREFIXES)),
+                                    "|".join(map(re.escape, _UPLOAD_EXTS)))
+)
+SAMPLE_NAME_RE = re.compile(r"sample_[a-z0-9_]{1,40}_ecg\.csv")
+
+# Uploads are per-request scratch: a waveform plot is rendered, shown once,
+# and never referenced again. Without a sweep the directory grows without
+# bound and keeps patient-derived images on disk indefinitely.
+UPLOAD_TTL_SECONDS = int(os.environ.get("UPLOAD_TTL_SECONDS", 24 * 3600))
+
+
+def _is_generated_name(filename):
+    return bool(UPLOAD_NAME_RE.fullmatch(filename))
+
+
+def sweep_uploads(ttl_seconds=None, now=None):
+    """Delete generated upload files older than the TTL. Returns the count.
+
+    Only files matching UPLOAD_NAME_RE are eligible, so anything an operator
+    deliberately placed in the folder is left alone.
+    """
+    ttl = UPLOAD_TTL_SECONDS if ttl_seconds is None else ttl_seconds
+    now = time.time() if now is None else now
+    folder = app.config["UPLOAD_FOLDER"]
+    removed = 0
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return 0
+    for name in names:
+        if not _is_generated_name(name):
+            continue
+        path = os.path.join(folder, name)
+        try:
+            if now - os.path.getmtime(path) > ttl:
+                os.remove(path)
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+@app.before_request
+def _sweep_uploads_periodically():
+    """Sweep at most once every 10 minutes, on whatever request comes first.
+
+    A background thread would be tidier but this app is deliberately a single
+    synchronous process; hanging the sweep off request traffic keeps it that
+    way and costs a directory listing per ten minutes.
+    """
+    global _last_sweep
+    now = time.time()
+    if now - _last_sweep < 600:
+        return
+    _last_sweep = now
+    sweep_uploads(now=now)
+
+
+_last_sweep = 0.0
+
+
 @app.route("/")
 def home():
     return render_template("index.html")
@@ -1156,11 +826,15 @@ def favicon():
 
 @app.route("/uploads/<filename>")
 def uploaded_file(filename):
+    if not _is_generated_name(filename):
+        abort(404)
     return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 
 @app.route("/samples/<filename>")
 def sample_file(filename):
+    if not SAMPLE_NAME_RE.fullmatch(filename):
+        abort(404)
     return send_from_directory("static/samples", filename)
 
 
@@ -1233,7 +907,7 @@ def analyze_ecg():
             digitized = extract_leads(filepath)
             leads = digitized["leads"]
             ecg_values = leads.get("II", next(iter(leads.values())))
-            X = prepare_qcnn_input(ecg_values)
+            X = prepare_beats(ecg_values)
             # A digitized trace has one sample per pixel COLUMN, so its true
             # sampling rate is set by the paper speed: 25 mm/s x px/mm. It is
             # NOT the 360 Hz of the MIT-BIH CSV path. With no grid there is no
@@ -1246,34 +920,56 @@ def analyze_ecg():
             input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
         else:
             ecg_values = load_ecg_file(filepath)
-            X = prepare_qcnn_input(ecg_values)
+            X = prepare_beats(ecg_values)
             report = analyse_ecg_parameters(ecg_values, fs=360.0)
             input_source = "ECG data file"
 
-        qcnn_result = predict_ecg(X)
+        # Beat classification is optional: the signal measurements below stand
+        # on their own, so a missing classifier degrades the page rather than
+        # failing it.
+        try:
+            beat_result = predict_ecg(X)
+            classifier_error = None
+        except NoECGModelError as e:
+            beat_result = None
+            classifier_error = str(e)
+
+        # Structured clinical reading: formula, value, reference range and
+        # verdict per parameter. Built from the same Measurements shown above,
+        # so the two can never disagree.
+        clinical = clinical_report(report, sex=patient.get("gender"),
+                                   beat_result=beat_result)
 
         plot_filename = "ecg_waveform_" + uuid.uuid4().hex[:8] + ".png"
         create_ecg_plot(ecg_values, plot_filename)
 
-        classifier = qcnn_result.get("method", "8-qubit QCNN")
-        if qcnn_result["prediction"] == "NORMAL":
-            interpretation = (f"The {classifier} classified the ECG as NORMAL "
-                              f"({qcnn_result['abnormal_type']}).")
-            recommendation = "Normal rhythm detected. Routine clinical monitoring recommended."
+        if beat_result is None:
+            classifier = None
+            interpretation = ("No beat classification was produced: " + classifier_error)
+            recommendation = ("Interval and rhythm measurements below are derived "
+                              "from the signal itself and are unaffected. Any "
+                              "diagnostic conclusion requires review by a clinician.")
         else:
-            interpretation = (f"The {classifier} classified the ECG as ABNORMAL "
-                              f"({qcnn_result['abnormal_type']}).")
-            recommendation = "Abnormal pattern identified. Clinical evaluation by a cardiologist is advised."
+            classifier = beat_result["method"]
+            if beat_result["prediction"] == "NORMAL":
+                interpretation = (f"The {classifier} classified the ECG as NORMAL "
+                                  f"({beat_result['abnormal_type']}).")
+                recommendation = "Normal rhythm detected. Routine clinical monitoring recommended."
+            else:
+                interpretation = (f"The {classifier} classified the ECG as ABNORMAL "
+                                  f"({beat_result['abnormal_type']}).")
+                recommendation = "Abnormal pattern identified. Clinical evaluation by a cardiologist is advised."
 
         result = {
-            "prediction": qcnn_result["prediction"],
-            "abnormal_type": qcnn_result["abnormal_type"],
-            "confidence": qcnn_result["confidence"],
-            "atrial_probability": qcnn_result["atrial_probability"],
+            "prediction": beat_result["prediction"] if beat_result else None,
+            "abnormal_type": beat_result["abnormal_type"] if beat_result else None,
+            "confidence": beat_result["confidence"] if beat_result else None,
+            "atrial_probability": beat_result["atrial_probability"] if beat_result else None,
             "classifier": classifier,
-            "beat_distribution": qcnn_result.get("beat_distribution"),
-            "beat_counts": qcnn_result.get("beat_counts"),
-            "beats_analyzed": qcnn_result.get("beats_analyzed"),
+            "classifier_error": classifier_error,
+            "beat_distribution": beat_result.get("beat_distribution") if beat_result else None,
+            "beat_counts": beat_result.get("beat_counts") if beat_result else None,
+            "beats_analyzed": beat_result.get("beats_analyzed") if beat_result else None,
             "heart_rate": report["display"]["heart_rate"],
             "rr_interval": report["display"]["rr_interval"],
             "qrs_duration": report["display"]["qrs_duration"],
@@ -1288,6 +984,7 @@ def analyze_ecg():
             "signal_quality": _signal_quality(report),
             "interpretation": interpretation,
             "recommendation": recommendation,
+            "clinical": clinical,
             "waveform": plot_filename,
             "input_source": input_source
         }
@@ -1343,7 +1040,17 @@ def analyze_brain_tumor():
     try:
         # Load image in any supported format (including DICOM)
         img = load_image_rgb(filepath)
-        res = predict_brain_tumor(filepath)
+        try:
+            res = predict_brain_tumor(filepath)
+        except NoMRIModelError as e:
+            # Nothing further on this page is meaningful without a
+            # classification -- the Grad-CAM, the tumour morphometry and the
+            # clinical wording are all downstream of it -- so this is a
+            # refusal, not a degraded render.
+            return render_template("brain_tumor.html",
+                                   error=str(e), patient=entered,
+                                   patient_fields=PATIENT_FIELDS,
+                                   gender_options=GENDER_OPTIONS)
 
         # Save a browser-renderable copy of the scan
         display_filename = "mri_analysis_" + uuid.uuid4().hex[:8] + ".png"
@@ -1510,131 +1217,8 @@ def analyze_satellite():
 
 
 # ------------------------------------------------------------
-# PDF REPORT BUILDER
+# PDF REPORT BUILDER -- document assembly lives in reporting/pdf.py
 # ------------------------------------------------------------
-
-REPORT_STYLES = getSampleStyleSheet()
-REPORT_STYLES.add(ParagraphStyle(
-    name="ReportTitle", parent=REPORT_STYLES["Title"],
-    fontSize=18, leading=22, spaceAfter=2
-))
-REPORT_STYLES.add(ParagraphStyle(
-    name="ReportSubtitle", parent=REPORT_STYLES["Normal"],
-    fontSize=10, leading=14, textColor=colors.HexColor("#475569"), alignment=1
-))
-REPORT_STYLES.add(ParagraphStyle(
-    name="SectionHeading", parent=REPORT_STYLES["Heading3"],
-    fontSize=11.5, leading=14, spaceBefore=4, spaceAfter=6,
-    textColor=colors.HexColor("#0f172a")
-))
-REPORT_STYLES.add(ParagraphStyle(
-    name="ReportBody", parent=REPORT_STYLES["BodyText"],
-    fontSize=10, leading=14.5
-))
-REPORT_STYLES.add(ParagraphStyle(
-    name="Cell", parent=REPORT_STYLES["BodyText"],
-    fontSize=9.5, leading=12.5, spaceBefore=0, spaceAfter=0
-))
-REPORT_STYLES.add(ParagraphStyle(
-    name="Disclaimer", parent=REPORT_STYLES["Italic"],
-    fontSize=8.5, leading=11.5, textColor=colors.HexColor("#64748b")
-))
-
-TABLE_WIDTHS = [200, 323]
-
-
-def _cell(text, bold=False):
-    """Escape a value and wrap it in a Paragraph so long text wraps in-cell."""
-    safe = escape(str(text if text not in (None, "") else NOT_PROVIDED))
-    if bold:
-        safe = f"<b>{safe}</b>"
-    return Paragraph(safe, REPORT_STYLES["Cell"])
-
-
-def _data_table(rows, accent):
-    """Build a two-column label/value table with a coloured header row."""
-    data = [[_cell(rows[0][0], bold=True), _cell(rows[0][1], bold=True)]]
-    data += [[_cell(label), _cell(value)] for label, value in rows[1:]]
-
-    table = Table(data, colWidths=TABLE_WIDTHS, repeatRows=1, hAlign="LEFT")
-    table.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(accent)),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("ROWBACKGROUNDS", (0, 1), (-1, -1),
-         [colors.white, colors.HexColor("#f8fafc")]),
-        ("GRID", (0, 0), (-1, -1), 0.6, colors.HexColor("#cbd5e1")),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
-    ]))
-    return table
-
-
-def _header_footer(canvas, doc, accent, footer_text):
-    """Draw the accent rule, page number and footer note on every page."""
-    canvas.saveState()
-    width, _ = A4
-
-    canvas.setStrokeColor(colors.HexColor(accent))
-    canvas.setLineWidth(2)
-    canvas.line(36, doc.pagesize[1] - 30, width - 36, doc.pagesize[1] - 30)
-
-    canvas.setFont("Helvetica", 7.5)
-    canvas.setFillColor(colors.HexColor("#94a3b8"))
-    canvas.drawString(36, 24, footer_text)
-    canvas.drawRightString(width - 36, 24, f"Page {canvas.getPageNumber()}")
-    canvas.restoreState()
-
-
-def build_pdf_report(title, subtitle, accent, meta, meta_fields,
-                     meta_heading, sections, disclaimer, footer_text):
-    """Assemble a consistently styled PDF and return it as a BytesIO buffer.
-
-    sections: list of ("table", heading, [(label, value), ...])
-              or        ("text",  heading, body_string)
-    """
-    buffer = io.BytesIO()
-    document = SimpleDocTemplate(
-        buffer, pagesize=A4,
-        rightMargin=36, leftMargin=36, topMargin=48, bottomMargin=42,
-        title=title, author="Unified AI Diagnostic Platform"
-    )
-
-    story = [
-        Paragraph(escape(title), REPORT_STYLES["ReportTitle"]),
-        Paragraph(escape(subtitle), REPORT_STYLES["ReportSubtitle"]),
-        Spacer(1, 6),
-        Paragraph(
-            f"Report ID: <b>{escape(meta.get('report_id', NOT_PROVIDED))}</b> &nbsp;|&nbsp; "
-            f"Generated: <b>{escape(meta.get('generated_at', NOT_PROVIDED))}</b>",
-            REPORT_STYLES["ReportSubtitle"]
-        ),
-        Spacer(1, 16),
-        Paragraph(escape(meta_heading), REPORT_STYLES["SectionHeading"]),
-        _data_table([("Field", "Details")] + metadata_rows(meta, meta_fields), accent),
-        Spacer(1, 16),
-    ]
-
-    for kind, heading, body in sections:
-        story.append(Paragraph(escape(heading), REPORT_STYLES["SectionHeading"]))
-        if kind == "table":
-            story.append(_data_table(body, accent))
-        else:
-            story.append(Paragraph(escape(str(body)), REPORT_STYLES["ReportBody"]))
-        story.append(Spacer(1, 14))
-
-    story.append(Spacer(1, 6))
-    story.append(Paragraph(escape(disclaimer), REPORT_STYLES["Disclaimer"]))
-
-    def _decorate(canvas, doc):
-        _header_footer(canvas, doc, accent, footer_text)
-
-    document.build(story, onFirstPage=_decorate, onLaterPages=_decorate)
-    buffer.seek(0)
-    return buffer
-
 
 def _form_meta(form, fields):
     """Rebuild a metadata dict from the hidden fields posted by a result page."""
@@ -1667,21 +1251,61 @@ def _pdf_value(raw):
     return raw
 
 
+def _clinical_from_form(form):
+    """Rebuild the structured reading from the measurements posted back.
+
+    Returns None when the page posted no measurement payload -- an older
+    result page, or a direct post -- so the report simply omits the section
+    rather than inventing one.
+    """
+    raw = form.get("clinical_json")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+    if not isinstance(data, dict) or "parameters" not in data:
+        return None
+    return data
+
+
+def _ecg_classification_rows(form):
+    """Rows for the classification table, or an explicit statement of absence.
+
+    A report must never imply a classification happened when it did not, so
+    when no classifier ran the table carries the reason instead of a row of
+    em-dashes that reads like a missing measurement.
+    """
+    prediction = (form.get("prediction") or "").strip()
+    if not prediction:
+        return [
+            ("Parameter", "Result"),
+            ("Overall Rhythm Classification", "Not performed"),
+            ("Reason", form.get("classifier_error")
+                       or "No validated ECG classifier was installed."),
+            ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
+            ("Input Source", form.get("input_source", NOT_PROVIDED)),
+        ]
+    return [
+        ("Parameter", "Result"),
+        ("Overall Rhythm Classification", prediction),
+        ("Abnormality Class", form.get("abnormal_type", NOT_PROVIDED)),
+        ("Classifier", form.get("classifier", NOT_PROVIDED)),
+        ("Classifier Confidence", f"{form.get('confidence', '—')}%"),
+        ("Supraventricular (S) Beat Probability", f"{form.get('atrial_probability', '—')}%"),
+        ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
+        ("Input Source", form.get("input_source", NOT_PROVIDED)),
+    ]
+
+
 @app.route("/download_ecg_report", methods=["POST"])
 def download_ecg_report():
     form = request.form
     meta = _form_meta(form, PATIENT_FIELDS)
 
     sections = [
-        ("table", "1. QCNN Classification Result", [
-            ("Parameter", "Result"),
-            ("Overall Rhythm Classification", form.get("prediction", NOT_PROVIDED)),
-            ("Abnormality Class", form.get("abnormal_type", NOT_PROVIDED)),
-            ("Classifier Confidence", f"{form.get('confidence', '—')}%"),
-            ("Atrial Abnormality Probability", f"{form.get('atrial_probability', '—')}%"),
-            ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
-            ("Input Source", form.get("input_source", NOT_PROVIDED)),
-        ]),
+        ("table", "1. Beat Classification Result", _ecg_classification_rows(form)),
         ("table", "2. ECG Waveform Parameters", [
             ("Measurement", "Value"),
             ("Heart Rate", _pdf_value(form.get("heart_rate"))),
@@ -1700,9 +1324,35 @@ def download_ecg_report():
         ("text", "4. Recommended Next Steps", form.get("recommendation", NOT_PROVIDED)),
     ]
 
+    # The structured reading is carried from the result page as JSON. It is
+    # display data echoed back, not a re-measurement: the report can only be
+    # as trustworthy as the page that produced it. It is escaped like every
+    # other field on the way into the PDF, and a malformed or absent payload
+    # omits the section rather than substituting anything.
+    clinical = _clinical_from_form(form)
+    if clinical:
+        sections.insert(1, ("table", "2. Parameters, Formulas & Reference Ranges",
+                            [("Parameter", "Value / Range / Verdict")] +
+                            [(r["label"],
+                              f"{r['value']}  |  normal {r['range']}  |  "
+                              f"{r['verdict'] or (r['reason'] or 'not measurable')}")
+                             for r in clinical["parameters"]]))
+        sections.append(("text", "5. Diagnostic Status",
+                         f"{clinical['status']['classification']} — "
+                         f"{clinical['status']['abnormality']}"))
+        if clinical["status"]["findings"]:
+            sections.append(("table", "6. Supporting Findings",
+                             [("#", "Finding")] +
+                             [(str(i + 1), f) for i, f in
+                              enumerate(clinical["status"]["findings"])]))
+        sections.append(("table", "7. Precautions & Next Steps",
+                         [("#", "Action")] +
+                         [(str(i + 1), p) for i, p in
+                          enumerate(clinical["precautions"])]))
+
     buffer = build_pdf_report(
-        title="QUANTUM ECG ANALYSIS REPORT",
-        subtitle="AI Diagnostic Summary — 8-Qubit Quantum Convolutional Neural Network (QCNN)",
+        title="ECG ANALYSIS REPORT",
+        subtitle="AI Diagnostic Summary — AAMI 5-class beat classifier + signal measurements",
         accent="#4f46e5",
         meta=meta,
         meta_fields=PATIENT_FIELDS,
@@ -1714,7 +1364,7 @@ def download_ecg_report():
             "model-derived estimates and must be verified by a qualified cardiologist "
             "before any clinical decision is made."
         ),
-        footer_text="Unified AI Diagnostic Platform — Quantum ECG Analysis (research use only)"
+        footer_text="Unified AI Diagnostic Platform — ECG Analysis (research use only)"
     )
 
     name = _slug(meta.get("patient_id"), _slug(meta.get("patient_name"), "unidentified"))

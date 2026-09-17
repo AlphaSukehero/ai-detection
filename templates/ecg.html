@@ -32,7 +32,7 @@
                     <span>❤️</span> Patient & ECG Data Input
                 </div>
                 <div class="panel-subtitle">
-                    Enter the patient details, then upload single or multi-lead ECG recordings (.csv, .txt) <strong>or an ECG strip image (.jpg, .png)</strong> for Convolutional Neural Network (8-Qubit QCNN) analysis.
+                    Enter the patient details, then upload single or multi-lead ECG recordings (.csv, .txt) <strong>or an ECG strip image (.jpg, .png)</strong> for automated beat classification and interval measurement.
                 </div>
 
                 {% if error %}
@@ -61,7 +61,7 @@
                             </div>
 
                             <button type="submit" class="btn-primary" style="margin-top: 16px; background: var(--ecg-gradient); box-shadow: 0 4px 15px rgba(239, 68, 68, 0.3);">
-                                🚀 Analyze ECG Signal with QCNN &rarr;
+                                🚀 Analyze ECG Signal &rarr;
                             </button>
                         </div>
                     </div>
@@ -95,6 +95,12 @@
 
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">❤️ Prediction Result</h2>
 
+                {% if result.classifier_error %}
+                <div style="background: rgba(248,113,113,0.12); border: 1px solid var(--danger); border-radius: 8px; padding: 14px 16px; margin-bottom: 24px; color: var(--text); font-size: 14px;">
+                    &#9888;&#65039; <strong>No beat classification available.</strong><br>
+                    {{ result.classifier_error }}
+                </div>
+                {% else %}
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 12px;">
                     <div class="metric-box">
                         <div class="metric-label">Rhythm Classification</div>
@@ -111,11 +117,14 @@
                         <div class="metric-label">Classifier Confidence</div>
                         <div class="metric-value" style="color: #60a5fa;">{{ result.confidence }}%</div>
                     </div>
+                    {% if result.atrial_probability %}
                     <div class="metric-box">
-                        <div class="metric-label">Atrial Abnormality Probability</div>
+                        <div class="metric-label">Supraventricular (S) Beat Probability</div>
                         <div class="metric-value" style="color: #a78bfa;">{{ result.atrial_probability }}%</div>
                     </div>
+                    {% endif %}
                 </div>
+                {% endif %}
 
                 {% if result.input_source %}
                 <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 24px;">
@@ -124,9 +133,9 @@
                 {% endif %}
 
                 <!-- ============================== -->
-                <!-- 2. QCNN PREDICTION SUMMARY     -->
+                <!-- 2. BEAT CLASSIFICATION SUMMARY -->
                 <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 {% if result.beat_distribution %}Beat Classification Summary{% else %}QCNN Prediction Summary{% endif %}</h2>
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🧠 Beat Classification Summary</h2>
 
                 {% if result.classifier %}
                 <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 16px;">
@@ -253,7 +262,7 @@
                 <!-- ============================== -->
                 <!-- 5. CLINICAL INTERPRETATION     -->
                 <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🩺 Clinical QCNN Interpretation</h2>
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🩺 Clinical Interpretation</h2>
 
                 <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 24px;">
                     <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.interpretation }}</p>
@@ -269,6 +278,68 @@
                 </div>
 
                 <!-- ============================== -->
+                <!-- 6b. STRUCTURED CLINICAL READING -->
+                <!-- ============================== -->
+                {% if result.clinical %}
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin: 32px 0 16px;">📋 Structured Clinical Reading</h2>
+
+                <div style="overflow-x: auto; margin-bottom: 24px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 13px; min-width: 640px;">
+                    <thead>
+                        <tr style="text-align: left; color: var(--text-muted); border-bottom: 1px solid rgba(148,163,184,0.3);">
+                            <th style="padding: 10px 8px;">Parameter</th>
+                            <th style="padding: 10px 8px;">Formula / Metric</th>
+                            <th style="padding: 10px 8px;">Value</th>
+                            <th style="padding: 10px 8px;">Normal Range</th>
+                            <th style="padding: 10px 8px;">Verdict</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                    {% for row in result.clinical.parameters %}
+                        <tr style="border-bottom: 1px solid rgba(148,163,184,0.12);">
+                            <td style="padding: 10px 8px; font-weight: 600;">{{ row.label }}</td>
+                            <td style="padding: 10px 8px; color: var(--text-muted);">{{ row.formula }}</td>
+                            <td style="padding: 10px 8px;">
+                                {{ row.value }}
+                                {% if row.reason %}<br><span style="color: var(--text-muted); font-size: 11.5px;">{{ row.reason }}</span>{% endif %}
+                            </td>
+                            <td style="padding: 10px 8px; color: var(--text-muted);">{{ row.range }}</td>
+                            <td style="padding: 10px 8px; color: {% if row.verdict == 'Within range' %}var(--success){% elif row.verdict %}var(--danger){% else %}var(--text-muted){% endif %};">
+                                {{ row.verdict or '—' }}
+                            </td>
+                        </tr>
+                    {% endfor %}
+                    </tbody>
+                </table>
+                </div>
+
+                <h3 style="font-family: var(--font-heading); font-size: 17px; margin-bottom: 10px;">Diagnostic Status</h3>
+                <div class="metric-box" style="margin-bottom: 10px;">
+                    <div class="metric-label">Classification</div>
+                    <div class="metric-value" style="color: {% if result.clinical.status.classification == 'NORMAL' %}var(--success){% elif result.clinical.status.classification == 'ABNORMAL' %}var(--danger){% else %}#fbbf24{% endif %};">{{ result.clinical.status.classification }}</div>
+                </div>
+                <div class="metric-box" style="margin-bottom: 16px;">
+                    <div class="metric-label">Specific Type</div>
+                    <div class="metric-value" style="font-size: 15px;">{{ result.clinical.status.abnormality }}</div>
+                </div>
+
+                {% if result.clinical.status.findings %}
+                <ul style="margin: 0 0 24px 18px; color: var(--text); font-size: 13.5px; line-height: 1.8;">
+                    {% for f in result.clinical.status.findings %}<li>{{ f }}</li>{% endfor %}
+                </ul>
+                {% endif %}
+
+                <h3 style="font-family: var(--font-heading); font-size: 17px; margin-bottom: 10px;">Precautions &amp; Next Steps</h3>
+                <ul style="margin: 0 0 20px 18px; color: var(--text); font-size: 13.5px; line-height: 1.8;">
+                    {% for p in result.clinical.precautions %}<li>{{ p }}</li>{% endfor %}
+                </ul>
+
+                <div style="background: rgba(148,163,184,0.10); border-left: 3px solid var(--text-muted); padding: 12px 16px; border-radius: 6px; margin-bottom: 28px; color: var(--text-muted); font-size: 12.5px; line-height: 1.7;">
+                    {{ result.clinical.disclaimer }}
+                </div>
+                {% endif %}
+
+                <!-- ============================== -->
                 <!-- 7. PATIENT REPORT / PDF        -->
                 <!-- ============================== -->
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📄 Patient Report</h2>
@@ -281,9 +352,13 @@
                     {% with meta = patient, meta_fields = patient_fields %}
                         {% include "_meta_hidden.html" %}
                     {% endwith %}
-                    <input type="hidden" name="prediction" value="{{ result.prediction }}">
-                    <input type="hidden" name="abnormal_type" value="{{ result.abnormal_type }}">
-                    <input type="hidden" name="confidence" value="{{ result.confidence }}">
+                    <input type="hidden" name="prediction" value="{{ result.prediction or '' }}">
+                    <input type="hidden" name="abnormal_type" value="{{ result.abnormal_type or '' }}">
+                    <input type="hidden" name="confidence" value="{{ result.confidence or '' }}">
+                    <input type="hidden" name="atrial_probability" value="{{ result.atrial_probability or '' }}">
+                    <input type="hidden" name="classifier" value="{{ result.classifier or '' }}">
+                    <input type="hidden" name="classifier_error" value="{{ result.classifier_error or '' }}">
+                    <input type="hidden" name="clinical_json" value="{{ result.clinical | tojson | e }}">
                     <input type="hidden" name="heart_rate" value="{{ result.heart_rate }}">
                     <input type="hidden" name="rr_interval" value="{{ result.rr_interval }}">
                     <input type="hidden" name="qrs_duration" value="{{ result.qrs_duration }}">
@@ -313,14 +388,14 @@
             <!-- ============================== -->
             <div style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 10px;">
                 <p style="color: var(--text-muted); font-size: 13px; line-height: 1.7;">
-                    ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. The Quantum CNN provides a rhythm classification prediction and waveform analysis.<br>
+                    ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. Beat classification comes from a 1D CNN trained on MIT-BIH with an inter-patient split; see the model card for its measured per-class performance.<br>
                     The ECG parameters, clinical interpretation and recommendations are model-derived estimates and are not clinical measurements. Clinical verification required.
                 </p>
             </div>
         </div>
 
         <footer>
-            <p>&copy; 2026 ECG Analysis Engine. Research prototype using PennyLane 8-Qubit QCNN.</p>
+            <p>&copy; 2026 ECG Analysis Engine. Research prototype — AAMI 5-class beat CNN and signal-derived measurements.</p>
         </footer>
     </div>
 </body>
