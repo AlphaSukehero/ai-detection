@@ -23,7 +23,7 @@ cards into `model/`.
 
 ```bash
 python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+.venv/bin/pip install -r requirements.txt -r requirements-eeg.txt
 .venv/bin/python app.py          # http://127.0.0.1:5050 — all modules (ECG, EEG, MRI, satellite)
 ```
 
