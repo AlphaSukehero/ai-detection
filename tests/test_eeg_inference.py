@@ -70,7 +70,8 @@ def test_consecutive_flagged_windows_become_one_episode():
     scores = [0.0] * n
     for i in range(5, 10):
         scores[i] = 0.9
-    r = analyse_signal(_recording(), FS, model=_Model(scores))
+    r = analyse_signal(_recording(), FS, model=_Model(scores),
+                       smooth_windows=1, min_episode_s=0.0)
     assert r["model_used"] is True
     assert len(r["episodes"]) == 1
     ep = r["episodes"][0]
@@ -107,7 +108,8 @@ def test_summary_reports_onset_of_the_earliest_episode():
     r0 = analyse_signal(_recording(), FS, model=None)
     scores = [0.0] * r0["n_windows"]
     scores[4] = scores[5] = 0.95
-    s = summarise(analyse_signal(_recording(), FS, model=_Model(scores)))
+    s = summarise(analyse_signal(_recording(), FS, model=_Model(scores),
+                                 smooth_windows=1, min_episode_s=0.0))
     assert s["episodes"] == 1
     assert "onset at" in s["headline"]
     assert s["burden_pct"] > 0
@@ -124,3 +126,61 @@ def test_summary_says_so_when_nothing_was_detected():
 def test_summary_without_a_model_does_not_claim_absence():
     s = summarise(analyse_signal(_recording(), FS, model=None))
     assert "No anomalous episode" not in s["headline"]
+
+
+def _scores_with(runs, n):
+    scores = [0.0] * n
+    for a, b, v in runs:
+        for i in range(a, b):
+            scores[i] = v
+    return scores
+
+
+def _n_windows(seconds=40.0):
+    return analyse_signal(_recording(seconds=seconds), FS, model=None)["n_windows"]
+
+
+def test_a_brief_isolated_spike_in_score_raises_no_episode():
+    """Most false alarms were one or two stray windows. A seizure is not."""
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 12, 0.95)], n)))
+    assert r["episodes"] == []
+    assert not any(w["flagged"] for w in r["windows"])
+
+
+def test_a_sustained_run_is_still_one_episode():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 25, 0.9)], n)))
+    assert len(r["episodes"]) == 1
+    assert r["episodes"][0]["duration_s"] >= 10.0
+
+
+def test_smoothing_bridges_a_single_dip_inside_an_event():
+    """One low window mid-seizure must not split the event in two."""
+    n = _n_windows()
+    scores = _scores_with([(8, 16, 0.9), (16, 17, 0.1), (17, 26, 0.9)], n)
+    r = analyse_signal(_recording(seconds=40.0), FS, model=_Model(scores))
+    assert len(r["episodes"]) == 1
+
+
+def test_flagged_windows_agree_with_reported_episodes():
+    n = _n_windows()
+    scores = _scores_with([(3, 5, 0.95), (15, 30, 0.9)], n)
+    r = analyse_signal(_recording(seconds=40.0), FS, model=_Model(scores))
+    in_episode = set()
+    for ep in r["episodes"]:
+        in_episode.update(range(ep["first_window"], ep["last_window"] + 1))
+    flagged = {w["index"] for w in r["windows"] if w["flagged"]}
+    assert flagged == in_episode
+
+
+def test_raw_score_is_kept_next_to_the_smoothed_one():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 11, 0.95)], n)))
+    w = r["windows"][10]
+    assert w["score"] == pytest.approx(0.95)
+    assert w["smoothed_score"] < w["score"]
+    assert r["smoothing"] == {"windows": 5, "min_episode_s": 10.0}

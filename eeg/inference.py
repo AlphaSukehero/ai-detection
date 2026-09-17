@@ -25,10 +25,20 @@ from eeg.windows import DEFAULT_OVERLAP, DEFAULT_WINDOW_S, segment
 DEFAULT_THRESHOLD = 0.5
 BATCH_SIZE = 64
 
+# Temporal smoothing, fixed from clinical convention rather than tuned on the
+# held-out recordings: electrographic seizures are by definition at least
+# ~10 s, and at 1 s steps a 5-window mean spans about half that. Per-window
+# thresholding alone flagged 8-22% of background windows on held-out CHB-MIT,
+# mostly as short isolated runs no clinician would call an event.
+DEFAULT_SMOOTH_WINDOWS = 5
+DEFAULT_MIN_EPISODE_S = 10.0
+
 
 def analyse_signal(signal, fs, model=None, card=None,
                    window_s=DEFAULT_WINDOW_S, overlap=DEFAULT_OVERLAP,
-                   threshold=DEFAULT_THRESHOLD, kind="scalogram"):
+                   threshold=DEFAULT_THRESHOLD, kind="scalogram",
+                   smooth_windows=DEFAULT_SMOOTH_WINDOWS,
+                   min_episode_s=DEFAULT_MIN_EPISODE_S):
     """Analyse a whole recording and return a per-window timeline.
 
     `model` may be None: the clinical parameters are measured from the signal
@@ -77,11 +87,22 @@ def analyse_signal(signal, fs, model=None, card=None,
 
     # An artifact window is never flagged: a clenched jaw is not a seizure,
     # and letting EMG raise an alarm is how these systems lose trust.
-    for w, s in zip(per_window, scores, strict=True):
+    artifact = np.array([w["artifact"] is not None for w in per_window])
+    smoothed = smooth_scores(scores, artifact, smooth_windows)
+    for w, s, m in zip(per_window, scores, smoothed, strict=True):
         w["score"] = float(s)
-        w["flagged"] = bool(s >= threshold and w["artifact"] is None)
+        w["smoothed_score"] = float(m)
+        w["flagged"] = bool(m >= threshold and w["artifact"] is None)
 
-    episodes = anomaly_episodes([w["flagged"] for w in per_window], times)
+    episodes = anomaly_episodes([w["flagged"] for w in per_window], times,
+                                min_duration_s=min_episode_s)
+    # Windows of runs too short to be an episode are un-flagged, so the
+    # timeline never shows an alarm the episode list does not.
+    kept = set()
+    for ep in episodes:
+        kept.update(range(ep["first_window"], ep["last_window"] + 1))
+    for w in per_window:
+        w["flagged"] = w["flagged"] and w["index"] in kept
     for ep in episodes:
         span = per_window[ep["first_window"]:ep["last_window"] + 1]
         ep["peak_score"] = max(w["score"] for w in span)
@@ -94,8 +115,27 @@ def analyse_signal(signal, fs, model=None, card=None,
         "windows": per_window, "episodes": episodes,
         "duration_s": float(times[-1][1]),
         "threshold": threshold,
+        "smoothing": {"windows": smooth_windows, "min_episode_s": min_episode_s},
         "artifact_windows": sum(1 for w in per_window if w["artifact"]),
     }
+
+
+def smooth_scores(scores, artifact, k):
+    """Centred moving mean of the scores over k windows.
+
+    Artifact windows are left out of every mean: EMG can push a score either
+    way, and it should neither create an event nor mask one. A window whose
+    whole neighbourhood is artifact keeps its raw score (it cannot be flagged
+    anyway).
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    if k <= 1:
+        return scores.copy()
+    valid = ~np.asarray(artifact, dtype=bool)
+    kernel = np.ones(k)
+    total = np.convolve(np.where(valid, scores, 0.0), kernel, mode="same")
+    count = np.convolve(valid.astype(np.float64), kernel, mode="same")
+    return np.where(count > 0, total / np.maximum(count, 1), scores)
 
 
 def _score(windows, fs, model, card, kind):
