@@ -1,0 +1,8 @@
+# EEG subsystem only. The Flask app (requirements.txt) does not need these,
+# and neither does the ECG/MRI/satellite training set (requirements-train.txt).
+#
+#   .venv/bin/pip install -r requirements-eeg.txt
+#   .venv/bin/streamlit run eeg_app.py
+mne==1.13.2
+PyWavelets==1.8.0
+streamlit==1.64.0
