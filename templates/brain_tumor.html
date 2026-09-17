@@ -208,6 +208,10 @@
                 <!-- ============================== -->
                 <!-- 7. PATIENT REPORT / PDF        -->
                 <!-- ============================== -->
+                {% with verdict = result.verdict, notes = result.notes, title = "MRI Classification" %}
+                    {% include "_doctor_notes.html" %}
+                {% endwith %}
+
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📄 Patient Report</h2>
 
                 <div style="background: rgba(16, 185, 129, 0.12); border: 1px solid rgba(16, 185, 129, 0.3); padding: 14px 20px; border-radius: 12px; margin-bottom: 16px; color: var(--success); font-size: 14px;">

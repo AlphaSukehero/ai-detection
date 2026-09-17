@@ -1,0 +1,26 @@
+{# Doctor-style result block shared by the ECG, EEG and MRI pages.
+   Expects: verdict {label, tone, detail}, notes {impression, recommendations, precautions}, title. #}
+{% set tone = {'good': 'var(--success)', 'bad': 'var(--danger)'}.get(verdict.tone, '#f59e0b') %}
+<div class="metric-box" style="margin-bottom: 20px; border-color: {{ tone }};">
+    <div class="metric-label">{{ title }}</div>
+    <div class="metric-value" style="color: {{ tone }}; font-size: 30px;">{{ verdict.label }}</div>
+    <div style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">{{ verdict.detail }}</div>
+</div>
+
+<h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 12px;">🩺 Clinical Impression</h2>
+<p style="font-size: 14px; line-height: 1.75; margin-bottom: 24px;">{{ notes.impression }}</p>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 28px;">
+    <div class="metric-box" style="text-align: left;">
+        <div class="metric-label" style="margin-bottom: 8px;">📋 Recommendations</div>
+        <ul style="padding-left: 18px; font-size: 13.5px; line-height: 1.7;">
+            {% for item in notes.recommendations %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </div>
+    <div class="metric-box" style="text-align: left; border-color: #f59e0b;">
+        <div class="metric-label" style="margin-bottom: 8px;">⚠️ Precautions</div>
+        <ul style="padding-left: 18px; font-size: 13.5px; line-height: 1.7;">
+            {% for item in notes.precautions %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </div>
+</div>

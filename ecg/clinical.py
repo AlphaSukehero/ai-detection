@@ -259,3 +259,82 @@ def clinical_report(report, sex=None, beat_result=None):
     status = diagnostic_status(report, rows, beat_result)
     return {"parameters": rows, "status": status,
             "precautions": precautions(status), "disclaimer": DISCLAIMER}
+
+
+VERDICT_TONES = {"NORMAL": "good", "ABNORMAL": "bad"}
+
+
+def doctor_notes(clinical, prediction=None, interpretation=None,
+                 recommendation=None):
+    """Doctor-style report wording: verdict, impression, advice, precautions.
+
+    `clinical` is the clinical_report() dict, possibly None when it did not
+    survive the round trip. The verdict comes from the structured reading
+    first, because it covers every measured parameter; the beat classifier's
+    label is the fallback. With neither, the study is NOT ASSESSED -- never
+    NORMAL.
+    """
+    status = (clinical or {}).get("status") or {}
+    label = status.get("classification") or (prediction or "").strip().upper()
+    if label not in ("NORMAL", "ABNORMAL", "INDETERMINATE"):
+        label = "NOT ASSESSED"
+
+    if label == "NOT ASSESSED":
+        detail = "No classification or structured reading was produced."
+        impression = ("No automated reading is available for this ECG. The "
+                      "tracing requires full review by a cardiologist; this "
+                      "report offers no reassurance.")
+    else:
+        detail = status.get("abnormality") or (
+            "Normal sinus rhythm" if label == "NORMAL" else "See findings")
+        parts = [f"{label} ECG. {detail}."]
+        findings = status.get("findings") or []
+        if findings:
+            parts.append("Supporting findings: " + "; ".join(findings) + ".")
+        if interpretation:
+            parts.append(interpretation.strip())
+        if label == "NORMAL":
+            parts.append("A normal resting ECG does not exclude intermittent "
+                         "arrhythmia or coronary disease; correlate with "
+                         "symptoms.")
+        impression = " ".join(parts)
+
+    recommendations = [recommendation.strip()] if recommendation else []
+    if label == "ABNORMAL":
+        recommendations += [
+            "Cardiology review with a formal 12-lead ECG.",
+            "Consider echocardiography and ambulatory (Holter) monitoring as "
+            "clinically indicated.",
+            "Check electrolytes (potassium, magnesium, calcium) and review "
+            "medication that affects heart rhythm or the QT interval.",
+        ]
+    elif label == "NORMAL":
+        recommendations += [
+            "Routine follow-up; repeat ECG if symptoms such as palpitations, "
+            "chest pain or fainting occur.",
+        ]
+    else:
+        recommendations += [
+            "Repeat the recording with good electrode contact, or provide a "
+            "strip image that includes the calibration grid.",
+            "Full review of the tracing by a cardiologist.",
+        ]
+
+    precautions = list((clinical or {}).get("precautions") or [])
+    if not precautions:
+        precautions = ["Do not treat this study as reassurance; no structured "
+                       "reading was performed.",
+                       "Seek emergency care for chest pain, severe "
+                       "breathlessness, fainting, or a sudden change in heart "
+                       "rhythm."]
+    precautions.append("This report is a screening aid and must be verified "
+                       "by a qualified cardiologist before any clinical "
+                       "decision.")
+
+    return {
+        "verdict": {"label": label, "tone": VERDICT_TONES.get(label, "warn"),
+                    "detail": detail},
+        "impression": impression,
+        "recommendations": recommendations,
+        "precautions": precautions,
+    }

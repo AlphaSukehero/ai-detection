@@ -128,3 +128,47 @@ def test_ecg_report_omits_the_section_when_the_payload_is_malformed(client):
     assert flask_app._clinical_from_form({"clinical_json": "{not json"}) is None
     assert flask_app._clinical_from_form({"clinical_json": '{"a":1}'}) is None
     assert flask_app._clinical_from_form({}) is None
+
+
+def _pdf_text(pdf):
+    import base64
+    import re
+    import zlib
+    return b"".join(zlib.decompress(base64.a85decode(m.strip(), adobe=True))
+                    for m in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S))
+
+
+DOCTOR_SECTIONS = (b"Clinical Impression", b"Recommendations", b"Precautions",
+                   b"Reporting Clinician")
+
+
+def test_ecg_report_reads_like_a_clinical_report(client):
+    import json
+    from ecg.clinical import clinical_report
+    from ecg.quality import Measurement, OK
+    rep = {k: Measurement(v, OK) for k, v in
+           [("heart_rate", 130.0), ("pr_interval", 0.16), ("qrs_duration", 0.09),
+            ("qtc", 0.41), ("st_segment", 0.0), ("qt_interval", 0.38)]}
+    rep["rhythm"] = Measurement(0.03, OK, "Regular")
+    data = dict(PATIENT, prediction="NORMAL", confidence="90",
+                interpretation="x", recommendation="y",
+                clinical_json=json.dumps(clinical_report(rep, sex="Male")))
+    text = _pdf_text(_is_pdf(client.post("/download_ecg_report", data=data)))
+    for s in DOCTOR_SECTIONS + (b"ECG Classification", b"(ABNORMAL"):
+        assert s in text, s
+
+
+def test_ecg_report_without_classifier_or_payload_is_not_normal(client):
+    data = dict(PATIENT, prediction="", classifier_error="no model")
+    text = _pdf_text(_is_pdf(client.post("/download_ecg_report", data=data)))
+    assert b"(NOT ASSESSED" in text and b"(NORMAL" not in text
+
+
+@pytest.mark.parametrize("prediction,verdict", [
+    ("Glioma", b"(ABNORMAL"), ("No Tumor", b"(NORMAL")])
+def test_mri_report_reads_like_a_clinical_report(client, prediction, verdict):
+    data = dict(PATIENT, prediction=prediction, confidence="88.10",
+                location="Left frontal", severity="Moderate", area="3.2")
+    text = _pdf_text(_is_pdf(client.post("/download_brain_tumor_report", data=data)))
+    for s in DOCTOR_SECTIONS + (b"MRI Classification", verdict):
+        assert s in text, s

@@ -84,3 +84,61 @@ def test_eeg_report_survives_a_malformed_payload(client):
     resp = client.post("/download_eeg_report", data=dict(PATIENT, eeg_json="{bad"))
     assert resp.status_code == 200
     assert resp.get_data().startswith(b"%PDF-")
+
+
+@pytest.mark.parametrize("model_used,episodes,expected", [
+    (True, 2, "ABNORMAL"), (True, 0, "NORMAL"), (False, 0, "NOT ASSESSED")])
+def test_eeg_verdict(model_used, episodes, expected):
+    assert flask_app.eeg_verdict(model_used, episodes)["label"] == expected
+
+
+def test_eeg_page_and_pdf_show_the_verdict(client):
+    data = dict(PATIENT, duration="20", eeg_file=(_trace_png(), "trace.png"))
+    html = client.post("/analyze_eeg", data=data,
+                       content_type="multipart/form-data").get_data(as_text=True)
+    assert "EEG Classification" in html
+    assert any(v in html for v in ("ABNORMAL", "NORMAL", "NOT ASSESSED"))
+    fields = dict(PATIENT, eeg_json='{"model_used": true, "episodes_n": 0}')
+    pdf = client.post("/download_eeg_report", data=fields).get_data()
+    assert pdf.startswith(b"%PDF-")
+
+
+def test_unassessed_report_never_says_normal(client):
+    import base64
+    import re
+    import zlib
+    pdf = client.post("/download_eeg_report",
+                      data=dict(PATIENT, eeg_json='{"model_used": false}')).get_data()
+    # ReportLab streams are ASCII85 wrapped around Flate.
+    text = b"".join(zlib.decompress(base64.a85decode(m.strip(), adobe=True))
+                    for m in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S))
+    assert b"NOT ASSESSED" in text
+    assert b"(NORMAL" not in text
+
+
+def _pdf_text(pdf):
+    import base64
+    import re
+    import zlib
+    return b"".join(zlib.decompress(base64.a85decode(m.strip(), adobe=True))
+                    for m in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S))
+
+
+def test_eeg_pdf_reads_like_a_clinical_report(client):
+    payload = ('{"model_used": true, "episodes_n": 1, "task_key": "seizure", '
+               '"episodes": [{"onset_s": 2, "offset_s": 8, "duration_s": 6, '
+               '"peak_score": 0.9, "spike_rate_per_s": 1.2}]}')
+    pdf = client.post("/download_eeg_report",
+                      data=dict(PATIENT, eeg_json=payload)).get_data()
+    text = _pdf_text(pdf)
+    for heading in (b"Clinical Impression", b"Recommendations",
+                    b"Precautions", b"Reporting Clinician", b"(ABNORMAL"):
+        assert heading in text, heading
+
+
+def test_eeg_page_shows_the_same_advice(client):
+    data = dict(PATIENT, duration="20", eeg_file=(_trace_png(), "trace.png"))
+    html = client.post("/analyze_eeg", data=data,
+                       content_type="multipart/form-data").get_data(as_text=True)
+    for heading in ("Clinical Impression", "Recommendations", "Precautions"):
+        assert heading in html, heading

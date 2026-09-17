@@ -34,9 +34,11 @@ except Exception as e:
 from mlkit.registry import RegistryError, load_card, validate_card
 from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
 from ecg.digitize import extract_leads
-from ecg.clinical import clinical_report
+from ecg.clinical import clinical_report, doctor_notes as ecg_doctor_notes
 from ecg.beats import segment_signal
-from reporting.pdf import build_pdf_report
+from reporting.pdf import build_pdf_report, doctor_sections, verdict_section
+from eeg.interpretation import clinical_notes as eeg_clinical_notes
+from vision.interpretation import clinical_notes as mri_clinical_notes, mri_verdict
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
     collect_metadata, finalize_metadata, metadata_rows, _clean_text,
@@ -1022,6 +1024,8 @@ def analyze_ecg():
             "waveform": plot_filename,
             "input_source": input_source
         }
+        result["notes"] = ecg_doctor_notes(clinical, result["prediction"],
+                                           interpretation, recommendation)
 
         return render_template("ecg.html", result=result, patient=patient,
                                patient_fields=PATIENT_FIELDS,
@@ -1165,6 +1169,8 @@ def analyze_brain_tumor():
             "spread": spread
         }
 
+        result["verdict"] = mri_verdict(result["prediction"])
+        result["notes"] = mri_clinical_notes(result["prediction"], result)
         return render_template("brain_tumor.html", result=result, patient=patient,
                                patient_fields=PATIENT_FIELDS,
                                patient_rows=metadata_rows(patient, PATIENT_FIELDS),
@@ -1338,7 +1344,19 @@ def download_ecg_report():
     form = request.form
     meta = _form_meta(form, PATIENT_FIELDS)
 
+    # The structured reading is carried from the result page as JSON. It is
+    # display data echoed back, not a re-measurement: the report can only be
+    # as trustworthy as the page that produced it. It is escaped like every
+    # other field on the way into the PDF, and a malformed or absent payload
+    # omits the section rather than substituting anything.
+    clinical = _clinical_from_form(form)
+    notes = ecg_doctor_notes(clinical, form.get("prediction"),
+                             form.get("interpretation"),
+                             form.get("recommendation"))
+
     sections = [
+        verdict_section("ECG Classification", notes["verdict"]),
+        ("text", "Clinical Impression", notes["impression"]),
         ("table", "1. Beat Classification Result", _ecg_classification_rows(form)),
         ("table", "2. ECG Waveform Parameters", [
             ("Measurement", "Value"),
@@ -1354,35 +1372,20 @@ def download_ecg_report():
             ("ST Segment", _pdf_value(form.get("st_segment"))),
             ("QRS Axis", _pdf_value(form.get("axis"))),
         ]),
-        ("text", "3. Clinical Interpretation", form.get("interpretation", NOT_PROVIDED)),
-        ("text", "4. Recommended Next Steps", form.get("recommendation", NOT_PROVIDED)),
     ]
-
-    # The structured reading is carried from the result page as JSON. It is
-    # display data echoed back, not a re-measurement: the report can only be
-    # as trustworthy as the page that produced it. It is escaped like every
-    # other field on the way into the PDF, and a malformed or absent payload
-    # omits the section rather than substituting anything.
-    clinical = _clinical_from_form(form)
     if clinical:
-        sections.insert(1, ("table", "2. Parameters, Formulas & Reference Ranges",
-                            [("Parameter", "Value / Range / Verdict")] +
-                            [(r["label"],
-                              f"{r['value']}  |  normal {r['range']}  |  "
-                              f"{r['verdict'] or (r['reason'] or 'not measurable')}")
-                             for r in clinical["parameters"]]))
-        sections.append(("text", "5. Diagnostic Status",
-                         f"{clinical['status']['classification']} — "
-                         f"{clinical['status']['abnormality']}"))
+        sections.append(("table", "3. Parameters, Formulas & Reference Ranges",
+                         [("Parameter", "Value / Range / Verdict")] +
+                         [(r["label"],
+                           f"{r['value']}  |  normal {r['range']}  |  "
+                           f"{r['verdict'] or (r['reason'] or 'not measurable')}")
+                          for r in clinical["parameters"]]))
         if clinical["status"]["findings"]:
-            sections.append(("table", "6. Supporting Findings",
+            sections.append(("table", "4. Supporting Findings",
                              [("#", "Finding")] +
                              [(str(i + 1), f) for i, f in
                               enumerate(clinical["status"]["findings"])]))
-        sections.append(("table", "7. Precautions & Next Steps",
-                         [("#", "Action")] +
-                         [(str(i + 1), p) for i, p in
-                          enumerate(clinical["precautions"])]))
+    sections += doctor_sections(notes)
 
     buffer = build_pdf_report(
         title="ECG ANALYSIS REPORT",
@@ -1413,7 +1416,10 @@ def download_brain_tumor_report():
     meta = _form_meta(form, PATIENT_FIELDS)
     prediction = form.get("prediction", NOT_PROVIDED)
 
+    notes = mri_clinical_notes(prediction, form)
     sections = [
+        verdict_section("MRI Classification", mri_verdict(prediction)),
+        ("text", "Clinical Impression", notes["impression"]),
         ("table", "1. Classification Result", [
             ("Diagnostic Attribute", "AI System Evaluation"),
             ("Primary Tumor Classification", prediction),
@@ -1422,7 +1428,7 @@ def download_brain_tumor_report():
         ]),
     ]
 
-    if prediction != "No Tumor":
+    if prediction and prediction != "No Tumor":
         area_val = form.get('area', '—')
         width_val = form.get('width', '—')
         height_val = form.get('height', '—')
@@ -1441,8 +1447,7 @@ def download_brain_tumor_report():
 
     sections.append(("text", "3. Radiological Findings Summary",
                      form.get("findings", NOT_PROVIDED)))
-    sections.append(("text", "4. Recommended Next Steps",
-                     form.get("recommendation", NOT_PROVIDED)))
+    sections += doctor_sections(notes)
 
     buffer = build_pdf_report(
         title="BRAIN TUMOR MRI DIAGNOSTIC REPORT",
@@ -1580,6 +1585,22 @@ def create_eeg_plot(result, bands, filename):
     plt.close(fig)
 
 
+def eeg_verdict(model_used, episodes):
+    """Overall NORMAL / ABNORMAL call for an EEG study.
+
+    Without a model nothing was classified, so the answer is NOT ASSESSED:
+    measurements alone never make a recording "normal".
+    """
+    if not model_used:
+        return {"label": "NOT ASSESSED", "tone": "warn",
+                "detail": "No validated model installed; no window was classified."}
+    if episodes:
+        return {"label": "ABNORMAL", "tone": "bad",
+                "detail": f"{episodes} anomalous episode(s) detected."}
+    return {"label": "NORMAL", "tone": "good",
+            "detail": "No episode crossed the detection threshold."}
+
+
 def _eeg_page(**kw):
     kw.setdefault("patient", {})
     return render_template("eeg.html", patient_fields=PATIENT_FIELDS,
@@ -1657,13 +1678,14 @@ def analyze_eeg():
         "artifact_windows": result.get("artifact_windows", 0),
         "episodes": result["episodes"],
         "summary": summary,
+        "verdict": eeg_verdict(result["model_used"], summary["episodes"]),
         "bands": list(BANDS),
         "rows": rows,
         "card": card,
         "timeline": plot_filename,
     }
     view["report"] = {
-        "task": view["task_label"], "source": provenance,
+        "task": view["task_label"], "task_key": task, "source": provenance,
         "duration_s": view["duration_s"], "model_used": view["model_used"],
         "n_windows": view["n_windows"],
         "artifact_windows": view["artifact_windows"],
@@ -1678,6 +1700,8 @@ def analyze_eeg():
                       ("onset_s", "offset_s", "duration_s", "peak_score",
                        "spike_rate_per_s")} for e in result["episodes"]],
     }
+    view["notes"] = eeg_clinical_notes(task, view["verdict"]["label"],
+                                       view["report"])
     return _eeg_page(result=view, patient=patient,
                      patient_rows=metadata_rows(patient, PATIENT_FIELDS))
 
@@ -1697,7 +1721,12 @@ def download_eeg_report():
         return fmt.format(r[key]) if r.get(key) is not None else NOT_PROVIDED
 
     assessed = bool(r.get("model_used"))
+    verdict = eeg_verdict(assessed, r.get("episodes_n") or 0)
+    task_key = r.get("task_key") if r.get("task_key") in EEG_TASKS else "seizure"
+    notes = eeg_clinical_notes(task_key, verdict["label"], r)
     sections = [
+        verdict_section("EEG Classification", verdict),
+        ("text", "Clinical Impression", notes["impression"]),
         ("table", "1. Recording & Analysis", [
             ("Attribute", "Value"),
             ("Clinical Question", v("task")),
@@ -1713,7 +1742,7 @@ def download_eeg_report():
             ("Anomaly Burden", v("burden_pct", "{}%") if assessed else "—"),
             ("Mean Spike Rate", v("mean_spikes", "{} /s")),
         ]),
-        ("text", "3. Summary", r.get("headline") or NOT_PROVIDED),
+        ("text", "3. Automated Summary", r.get("headline") or NOT_PROVIDED),
     ]
     if r.get("band_means"):
         sections.append(("table", "4. Mean Relative Spectral Power",
@@ -1726,6 +1755,8 @@ def download_eeg_report():
                              f"{e['duration_s']:.1f} · {e['peak_score']:.3f} · "
                              f"{e['spike_rate_per_s']:.2f}")
                             for e in r["episodes"]]))
+
+    sections += doctor_sections(notes)
 
     buffer = build_pdf_report(
         title="EEG ANALYSIS REPORT",

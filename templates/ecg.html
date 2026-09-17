@@ -254,23 +254,9 @@
                 </div>
                 {% endif %}
 
-                <!-- ============================== -->
-                <!-- 5. CLINICAL INTERPRETATION     -->
-                <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🩺 Clinical Interpretation</h2>
-
-                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 24px;">
-                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.interpretation }}</p>
-                </div>
-
-                <!-- ============================== -->
-                <!-- 6. RECOMMENDATIONS             -->
-                <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">💡 Recommended Next Steps</h2>
-
-                <div style="background: rgba(15, 23, 42, 0.5); border-radius: 16px; padding: 20px; border: 1px solid var(--border-color); margin-bottom: 28px;">
-                    <p style="color: var(--text-secondary); font-size: 15px; line-height: 1.7;">{{ result.recommendation }}</p>
-                </div>
+                {% with verdict = result.notes.verdict, notes = result.notes, title = "ECG Classification" %}
+                    {% include "_doctor_notes.html" %}
+                {% endwith %}
 
                 <!-- ============================== -->
                 <!-- 6b. STRUCTURED CLINICAL READING -->
@@ -323,11 +309,6 @@
                     {% for f in result.clinical.status.findings %}<li>{{ f }}</li>{% endfor %}
                 </ul>
                 {% endif %}
-
-                <h3 style="font-family: var(--font-heading); font-size: 17px; margin-bottom: 10px;">Precautions &amp; Next Steps</h3>
-                <ul style="margin: 0 0 20px 18px; color: var(--text); font-size: 13.5px; line-height: 1.8;">
-                    {% for p in result.clinical.precautions %}<li>{{ p }}</li>{% endfor %}
-                </ul>
 
                 <div style="background: rgba(148,163,184,0.10); border-left: 3px solid var(--text-muted); padding: 12px 16px; border-radius: 6px; margin-bottom: 28px; color: var(--text-muted); font-size: 12.5px; line-height: 1.7;">
                     {{ result.clinical.disclaimer }}

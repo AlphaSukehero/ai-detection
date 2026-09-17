@@ -15,6 +15,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from webapp.metadata import NOT_PROVIDED, metadata_rows
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+    ListFlowable, ListItem,
 )
 
 
@@ -46,6 +47,32 @@ REPORT_STYLES.add(ParagraphStyle(
 ))
 
 TABLE_WIDTHS = [200, 323]
+
+
+def verdict_section(title, verdict):
+    """The headline result table every clinical report opens with."""
+    return ("table", title, [("Result", "Assessment"),
+                             (verdict["label"], verdict["detail"])])
+
+
+def clinician_signoff():
+    """Blank sign-off block for the reviewing clinician."""
+    return ("table", "Reporting Clinician", [
+        ("Field", "To be completed by the reviewing clinician"),
+        ("Name & Qualification", " "),
+        ("Registration No.", " "),
+        ("Signature", " "),
+        ("Date of Review", " "),
+    ])
+
+
+def doctor_sections(notes):
+    """Recommendations, precautions and sign-off, in that order."""
+    return [
+        ("bullets", "Recommendations", notes["recommendations"]),
+        ("bullets", "Precautions", notes["precautions"]),
+        clinician_signoff(),
+    ]
 
 
 def _cell(text, bold=False):
@@ -97,8 +124,9 @@ def build_pdf_report(title, subtitle, accent, meta, meta_fields,
                      meta_heading, sections, disclaimer, footer_text):
     """Assemble a consistently styled PDF and return it as a BytesIO buffer.
 
-    sections: list of ("table", heading, [(label, value), ...])
-              or        ("text",  heading, body_string)
+    sections: list of ("table",   heading, [(label, value), ...])
+              or        ("text",    heading, body_string)
+              or        ("bullets", heading, [item, ...])
     """
     buffer = io.BytesIO()
     document = SimpleDocTemplate(
@@ -126,6 +154,11 @@ def build_pdf_report(title, subtitle, accent, meta, meta_fields,
         story.append(Paragraph(escape(heading), REPORT_STYLES["SectionHeading"]))
         if kind == "table":
             story.append(_data_table(body, accent))
+        elif kind == "bullets":
+            story.append(ListFlowable(
+                [ListItem(Paragraph(escape(str(item)), REPORT_STYLES["ReportBody"]),
+                          leftIndent=12) for item in body],
+                bulletType="bullet", start="•", leftIndent=12))
         else:
             story.append(Paragraph(escape(str(body)), REPORT_STYLES["ReportBody"]))
         story.append(Spacer(1, 14))

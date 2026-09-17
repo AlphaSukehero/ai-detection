@@ -109,6 +109,10 @@
                     {{ result.summary.headline }}
                 </div>
 
+                {% with verdict = result.verdict, notes = result.notes, title = "EEG Classification" %}
+                    {% include "_doctor_notes.html" %}
+                {% endwith %}
+
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📊 Timeline</h2>
                 <img src="{{ url_for('uploaded_file', filename=result.timeline) }}" alt="EEG timeline" style="width: 100%; border-radius: 12px; margin-bottom: 28px; background: #fff;">
 
