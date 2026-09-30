@@ -48,6 +48,23 @@
                                 📈 ECG Signal Data (.CSV / .TXT) or ECG Image
                             </h3>
 
+                            <div class="field-grid" style="margin-bottom: 14px;">
+                                <div class="field">
+                                    <label for="ecg_duration">Recording duration (seconds) — images only</label>
+                                    <input type="number" id="ecg_duration" name="ecg_duration" min="0" max="600" step="0.1"
+                                           placeholder="e.g. 10" value="{{ request.form.get('ecg_duration', '') }}">
+                                    <div class="field-hint">Seconds shown across the full image width. Used in place of the printed grid; without either, intervals are not measured.</div>
+                                </div>
+                                <div class="field">
+                                    <label for="paper_speed">Paper speed</label>
+                                    <select id="paper_speed" name="paper_speed">
+                                        {% for s in ["25", "50"] %}
+                                        <option value="{{ s }}" {% if request.form.get('paper_speed', '25') == s %}selected{% endif %}>{{ s }} mm/s</option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                            </div>
+
                             <div class="upload-dropzone" style="flex: 1; display: flex; flex-direction: column; justify-content: center; align-items: center;" onclick="document.getElementById('ecg_file').click();">
                                 <div class="upload-icon" style="color: #f43f5e;">♡</div>
                                 <h3 style="margin-bottom: 6px; font-weight: 600; font-size: 15px;" id="upload-label">Drag & Drop ECG CSV / ECG image here or click to browse</h3>
@@ -86,6 +103,7 @@
                 {% with meta = patient, meta_rows = patient_rows %}
                     {% include "_meta_summary.html" %}
                 {% endwith %}
+                {% include "_record_panel.html" %}
                 {% endif %}
 
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">❤️ Prediction Result</h2>

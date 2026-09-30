@@ -5,6 +5,27 @@ MIN_PX_PER_MM = 2.0
 MAX_PX_PER_MM = 40.0
 
 
+def _dominant_period(profile):
+    """Strongest period (px) in a 1-D ink profile within the grid range."""
+    profile = profile - profile.mean()
+    if np.std(profile) < 1e-6:
+        return None
+    spectrum = np.abs(np.fft.rfft(profile))
+    freqs = np.fft.rfftfreq(len(profile), d=1.0)
+    # Only consider periods that could plausibly be 1 mm rulings.
+    valid = (freqs > 1.0 / MAX_PX_PER_MM) & (freqs < 1.0 / MIN_PX_PER_MM)
+    if not np.any(valid):
+        return None
+    band = spectrum[valid]
+    peak = float(np.max(band))
+    if peak < 4.0 * float(np.median(band)):
+        return None
+    # A ruling is a comb: its harmonics are as strong as its fundamental, so
+    # argmax can land on half the true spacing. Take the lowest strong one.
+    strong = np.flatnonzero(band >= 0.5 * peak)
+    return float(1.0 / freqs[valid][strong[0]])
+
+
 def detect_grid_scale(gray):
     """Pixels per millimetre, from the dominant period of the printed grid.
 
@@ -12,27 +33,14 @@ def detect_grid_scale(gray):
     the FFT of the column-ink profile. Returns None when no such peak stands
     out, which forces every time-based parameter to report "—" rather than
     silently assuming a scale.
+
+    The profile is the MEDIAN ink per column, not the mean. A ruling is inked
+    in every row of its column; a QRS spike only in the few rows the trace
+    crosses. With the mean, a regular QRS train's harmonics were read as a
+    grid and a gridless 72 bpm strip was reported at 125 bpm.
     """
-    arr = np.asarray(gray, dtype=float)
-    ink = 255.0 - arr
-    profile = ink.mean(axis=0)
-    profile = profile - profile.mean()
-    if np.std(profile) < 1e-6:
-        return None
-
-    spectrum = np.abs(np.fft.rfft(profile))
-    freqs = np.fft.rfftfreq(len(profile), d=1.0)
-    # Only consider periods that could plausibly be 1 mm rulings.
-    valid = (freqs > 1.0 / MAX_PX_PER_MM) & (freqs < 1.0 / MIN_PX_PER_MM)
-    if not np.any(valid):
-        return None
-
-    band = spectrum[valid]
-    peak = float(np.max(band))
-    if peak < 4.0 * float(np.median(band)):
-        return None
-    return float(1.0 / freqs[valid][int(np.argmax(band))])
-
+    ink = 255.0 - np.asarray(gray, dtype=float)
+    return _dominant_period(np.median(ink, axis=0))
 
 from PIL import Image
 from scipy.signal import find_peaks as _find_peaks
@@ -106,10 +114,11 @@ def extract_leads(image_path):
     px_per_mm = detect_grid_scale(gray)
     layout = detect_layout(gray)
     ink = 255.0 - gray
+    w_full = gray.shape[1]
 
     if layout == "single":
         return {"leads": {"II": _trace_row_band(ink)},
-                "layout": layout, "px_per_mm": px_per_mm}
+                "layout": layout, "px_per_mm": px_per_mm, "width": w_full}
 
     h, w = ink.shape
     leads = {}
@@ -118,4 +127,5 @@ def extract_leads(image_path):
         for c in range(4):
             col = band[:, c * w // 4:(c + 1) * w // 4]
             leads[LEAD_PANELS_3X4[r][c]] = _trace_row_band(col)
-    return {"leads": leads, "layout": layout, "px_per_mm": px_per_mm}
+    return {"leads": leads, "layout": layout, "px_per_mm": px_per_mm,
+            "width": w_full}

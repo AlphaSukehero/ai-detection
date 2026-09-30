@@ -78,6 +78,7 @@
                 {% with meta = patient, meta_rows = patient_rows %}
                     {% include "_meta_summary.html" %}
                 {% endwith %}
+                {% include "_record_panel.html" %}
                 {% endif %}
 
 
@@ -169,40 +170,27 @@
                 {% endif %}
 
                 <!-- ============================== -->
-                <!-- 6. TUMOR ANALYSIS              -->
+                <!-- 6. MODEL & ATTENTION MAP       -->
                 <!-- ============================== -->
-                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📊 Tumor Analysis</h2>
+                <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">📊 Model &amp; Attention Map</h2>
 
-                <!-- Row 1: Area / Width / Height -->
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 14px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
                     <div class="metric-box">
-                        <div class="metric-label">Estimated Area</div>
-                        <div class="metric-value" style="color: #f43f5e;">{{ result.area }}%</div>
+                        <div class="metric-label">Model Used</div>
+                        <div class="metric-value" style="font-size: 16px;">{{ result.model_name }}</div>
                     </div>
                     <div class="metric-box">
-                        <div class="metric-label">Estimated Width</div>
-                        <div class="metric-value">{{ result.width }} px</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Estimated Height</div>
-                        <div class="metric-value">{{ result.height }} px</div>
-                    </div>
-                </div>
-
-                <!-- Row 2: Location / Severity / Spread -->
-                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px;">
-                    <div class="metric-box">
-                        <div class="metric-label">Estimated Location</div>
+                        <div class="metric-label">Peak Attention Location</div>
                         <div class="metric-value" style="font-size: 16px; color: #60a5fa;">{{ result.location }}</div>
                     </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Estimated Severity</div>
-                        <div class="metric-value" style="font-size: 16px; color: {% if result.severity == 'High' %}var(--danger){% elif result.severity == 'Moderate' %}var(--warning){% else %}var(--success){% endif %};">{{ result.severity }}</div>
-                    </div>
-                    <div class="metric-box">
-                        <div class="metric-label">Estimated Spread</div>
-                        <div class="metric-value" style="font-size: 16px; color: #a78bfa;">{{ result.spread }}</div>
-                    </div>
+                </div>
+                {% if result.attention_error %}
+                <div style="background: rgba(251,191,36,0.12); border: 1px solid #f59e0b; border-radius: 12px; padding: 14px 20px; margin-bottom: 14px; font-size: 14px;">
+                    ⚠️ Attention map unavailable: {{ result.attention_error }}
+                </div>
+                {% endif %}
+                <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 28px;">
+                    Lesion size and severity are not reported: this system has a classifier, not a segmentation model, so it cannot measure them.
                 </div>
 
                 <!-- ============================== -->
@@ -226,12 +214,8 @@
                     <input type="hidden" name="confidence" value="{{ result.confidence }}">
                     <input type="hidden" name="findings" value="{{ result.findings }}">
                     <input type="hidden" name="recommendation" value="{{ result.recommendation }}">
-                    <input type="hidden" name="area" value="{{ result.area }}">
-                    <input type="hidden" name="width" value="{{ result.width }}">
-                    <input type="hidden" name="height" value="{{ result.height }}">
                     <input type="hidden" name="location" value="{{ result.location }}">
-                    <input type="hidden" name="severity" value="{{ result.severity }}">
-                    <input type="hidden" name="spread" value="{{ result.spread }}">
+                    <input type="hidden" name="model_name" value="{{ result.model_name }}">
                     <button type="submit" class="btn-primary" style="width: 100%; padding: 14px 24px; background: var(--mri-gradient); box-shadow: 0 4px 15px rgba(139, 92, 246, 0.3);">
                         📥 Download Complete Patient Report (PDF)
                     </button>
@@ -246,7 +230,7 @@
             <div style="border-top: 1px solid var(--border-color); padding-top: 24px; margin-top: 10px;">
                 <p style="color: var(--text-muted); font-size: 13px; line-height: 1.7;">
                     ⚠️ <strong>Research Prototype</strong> — This application is intended for academic and research purposes. The CNN provides a classification prediction and Grad-CAM provides an explanation of image regions influencing that prediction.<br>
-                    The highlighted region, estimated area, size, location, severity and spread are model-derived estimates and are not clinical measurements.
+                    The highlighted region and its location are model attention, not a clinical measurement or a tumour segmentation.
                 </p>
             </div>
         </div>

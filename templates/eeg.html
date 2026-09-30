@@ -83,6 +83,7 @@
                 {% if patient %}
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 16px;">🗂️ Study Details</h2>
                 {% with meta = patient, meta_rows = patient_rows %}{% include "_meta_summary.html" %}{% endwith %}
+                {% include "_record_panel.html" %}
                 {% endif %}
 
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 8px;">🧬 Analysis Result</h2>

@@ -15,7 +15,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from webapp.metadata import NOT_PROVIDED, metadata_rows
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
-    ListFlowable, ListItem,
+    ListFlowable, ListItem, Image, KeepTogether,
 )
 
 
@@ -120,21 +120,52 @@ def _header_footer(canvas, doc, accent, footer_text):
     canvas.restoreState()
 
 
-def build_pdf_report(title, subtitle, accent, meta, meta_fields,
-                     meta_heading, sections, disclaimer, footer_text):
-    """Assemble a consistently styled PDF and return it as a BytesIO buffer.
+CONTENT_WIDTH = sum(TABLE_WIDTHS)
+MAX_IMAGE_HEIGHT = 300
 
-    sections: list of ("table",   heading, [(label, value), ...])
-              or        ("text",    heading, body_string)
-              or        ("bullets", heading, [item, ...])
+
+def _image(path, caption):
+    """A picture scaled to the content width, or a stated absence."""
+    try:
+        from PIL import Image as PILImage
+        with PILImage.open(path) as im:
+            w, h = im.size
+    except Exception:
+        return Paragraph(escape(f"{caption}: image unavailable."),
+                         REPORT_STYLES["ReportBody"])
+    scale = min(CONTENT_WIDTH / w, MAX_IMAGE_HEIGHT / h)
+    return Image(path, width=w * scale, height=h * scale, hAlign="LEFT")
+
+
+def section_flowables(sections, accent):
+    """Flowables for a list of (kind, heading, payload) sections.
+
+    kind: "table"   -> [(label, value), ...] with a header row
+          "text"    -> a paragraph
+          "bullets" -> [item, ...]
+          "image"   -> a file path (PNG/JPEG)
     """
-    buffer = io.BytesIO()
-    document = SimpleDocTemplate(
-        buffer, pagesize=A4,
-        rightMargin=36, leftMargin=36, topMargin=48, bottomMargin=42,
-        title=title, author="Unified AI Diagnostic Platform"
-    )
+    story = []
+    for kind, heading, body in sections:
+        head = Paragraph(escape(heading), REPORT_STYLES["SectionHeading"])
+        if kind == "table":
+            story += [head, _data_table(body, accent)]
+        elif kind == "bullets":
+            story += [head, ListFlowable(
+                [ListItem(Paragraph(escape(str(item)), REPORT_STYLES["ReportBody"]),
+                          leftIndent=12) for item in body],
+                bulletType="bullet", start="•", leftIndent=12)]
+        elif kind == "image":
+            story.append(KeepTogether([head, _image(body, heading)]))
+        else:
+            story += [head, Paragraph(escape(str(body)), REPORT_STYLES["ReportBody"])]
+        story.append(Spacer(1, 14))
+    return story
 
+
+def report_story(title, subtitle, accent, meta, meta_fields, meta_heading,
+                 sections, disclaimer):
+    """The flowables of one complete report, for embedding or building."""
     story = [
         Paragraph(escape(title), REPORT_STYLES["ReportTitle"]),
         Paragraph(escape(subtitle), REPORT_STYLES["ReportSubtitle"]),
@@ -149,22 +180,26 @@ def build_pdf_report(title, subtitle, accent, meta, meta_fields,
         _data_table([("Field", "Details")] + metadata_rows(meta, meta_fields), accent),
         Spacer(1, 16),
     ]
-
-    for kind, heading, body in sections:
-        story.append(Paragraph(escape(heading), REPORT_STYLES["SectionHeading"]))
-        if kind == "table":
-            story.append(_data_table(body, accent))
-        elif kind == "bullets":
-            story.append(ListFlowable(
-                [ListItem(Paragraph(escape(str(item)), REPORT_STYLES["ReportBody"]),
-                          leftIndent=12) for item in body],
-                bulletType="bullet", start="•", leftIndent=12))
-        else:
-            story.append(Paragraph(escape(str(body)), REPORT_STYLES["ReportBody"]))
-        story.append(Spacer(1, 14))
-
+    story += section_flowables(sections, accent)
     story.append(Spacer(1, 6))
     story.append(Paragraph(escape(disclaimer), REPORT_STYLES["Disclaimer"]))
+    return story
+
+
+def build_pdf_report(title, subtitle, accent, meta, meta_fields,
+                     meta_heading, sections, disclaimer, footer_text):
+    """Assemble a consistently styled PDF and return it as a BytesIO buffer.
+
+    sections: see section_flowables.
+    """
+    buffer = io.BytesIO()
+    document = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=36, leftMargin=36, topMargin=48, bottomMargin=42,
+        title=title, author="Unified AI Diagnostic Platform"
+    )
+    story = report_story(title, subtitle, accent, meta, meta_fields,
+                         meta_heading, sections, disclaimer)
 
     def _decorate(canvas, doc):
         _header_footer(canvas, doc, accent, footer_text)
@@ -172,5 +207,3 @@ def build_pdf_report(title, subtitle, accent, meta, meta_fields,
     document.build(story, onFirstPage=_decorate, onLaterPages=_decorate)
     buffer.seek(0)
     return buffer
-
-

@@ -1,0 +1,22 @@
+{# "Saved to record" + "Since last visit" panel on a result page. Expects `saved`. #}
+{% if saved %}
+{% if saved.error %}
+<div class="records-error"><strong>⚠ Result shown but NOT saved to the record:</strong> {{ saved.error }}</div>
+{% else %}
+{% set st = saved.study %}
+<div class="records-bound">
+    <span>✅ <strong>Saved to record</strong> as <a href="/patients/{{ st.patient_id }}/studies/{{ st.id }}">{{ st.id }}</a></span>
+    <a href="/patients/{{ st.patient_id }}/studies/{{ st.id }}/pdf">📥 Stored PDF</a>
+    <a href="/patients/{{ st.patient_id }}">Patient history →</a>
+</div>
+{% if saved.previous %}
+{% set pv = saved.previous %}
+<h2 style="font-family: var(--font-heading); font-size: 22px; margin: 8px 0 6px;">🔁 Since last visit</h2>
+<div style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+    Compared with <a href="/patients/{{ pv.patient_id }}/studies/{{ pv.id }}" style="color:#a5b4fc">{{ pv.id }}</a> ({{ pv.study_date }}).
+    <a href="/patients/{{ st.patient_id }}/compare?a={{ pv.id }}&b={{ st.id }}" style="color:#a5b4fc">Full side-by-side comparison →</a>
+</div>
+{% with rows = saved.rows %}{% include "_compare_table.html" %}{% endwith %}
+{% endif %}
+{% endif %}
+{% endif %}

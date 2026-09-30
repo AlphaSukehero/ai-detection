@@ -45,6 +45,14 @@ def _png(size=(256, 256), seed=0):
     return buf
 
 
+def _post_mri(client, meta):
+    """A real scan: noise is now refused by the MRI input gate."""
+    data = dict(meta)
+    data["mri_file"] = (open("static/samples/mri_glioma.jpg", "rb"), "scan.jpg")
+    return client.post("/analyze_brain_tumor", data=data,
+                       content_type="multipart/form-data")
+
+
 def _post(client, path, field, meta, filename="scan.png"):
     data = dict(meta)
     data[field] = (_png(), filename)
@@ -55,19 +63,21 @@ def _post(client, path, field, meta, filename="scan.png"):
 
 @requires_mri_model
 def test_mri_route_renders_a_full_report(client):
-    resp = _post(client, "/analyze_brain_tumor", "mri_file", PATIENT)
+    resp = _post_mri(client, PATIENT)
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert "error" not in html.lower() or "Tumor" in html
 
 
 @requires_mri_model
-def test_mri_route_always_shows_the_analysis_metrics(client):
-    """Regression for 5f81210: metrics were hidden behind a No-Tumor branch."""
-    resp = _post(client, "/analyze_brain_tumor", "mri_file", PATIENT)
+def test_mri_route_always_shows_the_attention_section(client):
+    """Regression for 5f81210 (section hidden behind a No-Tumor branch). The
+    area/severity/spread it once showed were fabricated and are gone; see
+    tests/test_mri_route.py."""
+    resp = _post_mri(client, PATIENT)
     html = resp.get_data(as_text=True)
     assert resp.status_code == 200
-    for label in ["Estimated Area", "Estimated Severity", "Estimated Spread"]:
+    for label in ["Model Used", "Peak Attention Location"]:
         assert label in html, label
 
 
@@ -83,7 +93,7 @@ def test_mri_route_refuses_malformed_metadata_rather_than_analysing(client):
     """Blank fields are allowed (they become "Not provided"); bad ones are not,
     because an out-of-range age reaches the PDF as a patient record."""
     bad = dict(PATIENT, age="not-a-number")
-    resp = _post(client, "/analyze_brain_tumor", "mri_file", bad)
+    resp = _post_mri(client, bad)
     assert resp.status_code == 200
     html = resp.get_data(as_text=True)
     assert "Age must be a whole number" in html
@@ -93,9 +103,9 @@ def test_mri_route_refuses_malformed_metadata_rather_than_analysing(client):
 @requires_mri_model
 def test_mri_route_accepts_blank_metadata(client):
     blank = {k: "" for k in PATIENT}
-    resp = _post(client, "/analyze_brain_tumor", "mri_file", blank)
+    resp = _post_mri(client, blank)
     assert resp.status_code == 200
-    assert "Estimated Area" in resp.get_data(as_text=True)
+    assert "Peak Attention Location" in resp.get_data(as_text=True)
 
 
 # ---------------------------------------------------------- satellite route

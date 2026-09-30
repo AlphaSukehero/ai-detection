@@ -1,4 +1,41 @@
-{# Patient metadata block shared by the ECG and MRI analysis pages. #}
+{# Patient metadata block shared by the ECG, EEG and MRI analysis pages.
+   With `bound` (a registered patient), identity comes from the registry and
+   only the per-visit fields are entered; the study is saved to the record. #}
+{% if bound %}
+<div class="meta-form">
+    <div class="meta-form-header">
+        <h3>👤 Study for a registered patient</h3>
+    </div>
+    <input type="hidden" name="record_id" value="{{ bound.id }}">
+    <div class="records-bound">
+        <span><strong>{{ bound.name }}</strong></span>
+        <span>{{ bound.id }}</span>
+        <span>Age {{ bound.age if bound.age is not none else "—" }}</span>
+        <span>{{ bound.sex or "Sex not recorded" }}</span>
+        <a href="/patients/{{ bound.id }}">Open record →</a>
+    </div>
+    <p class="meta-form-note">This study will be saved to the patient's record, with its images, measurements and PDF.</p>
+    <div class="field-grid">
+        <div class="field">
+            <label for="study_date">Study Date</label>
+            <input type="date" id="study_date" name="study_date"
+                   value="{{ patient.get('study_date', '') if patient.get('study_date') != 'Not provided' else '' }}">
+            <div class="field-hint">Defaults to today.</div>
+        </div>
+        <div class="field">
+            <label for="referring_physician">Referring Physician</label>
+            <input type="text" id="referring_physician" name="referring_physician" maxlength="200"
+                   autocomplete="off" placeholder="e.g. Dr. A. Mehta"
+                   value="{{ patient.get('referring_physician', '') if patient.get('referring_physician') != 'Not provided' else '' }}">
+        </div>
+        <div class="field field-full">
+            <label for="clinical_history">Clinical History / Indication (this visit)</label>
+            <textarea id="clinical_history" name="clinical_history" maxlength="1000"
+                      placeholder="Presenting symptoms, reason for this study…">{{ patient.get('clinical_history', '') if patient.get('clinical_history') != 'Not provided' else '' }}</textarea>
+        </div>
+    </div>
+</div>
+{% else %}
 <div class="meta-form">
     <div class="meta-form-header">
         <h3>👤 Patient Details</h3>
@@ -67,3 +104,4 @@
         </div>
     </div>
 </div>
+{% endif %}

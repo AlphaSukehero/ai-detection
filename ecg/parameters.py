@@ -217,7 +217,8 @@ def _all_unavailable(reason):
     return report
 
 
-def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
+def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False,
+            paper_speed_mm_s=PAPER_SPEED_MM_S):
     """Measure every displayed parameter, flagging what could not be measured.
 
     On the image path the timebase comes from the printed grid: a digitized
@@ -229,10 +230,10 @@ def analyse(signal_or_leads, fs=360.0, px_per_mm=None, from_image=False):
     if from_image and px_per_mm is None:
         return _all_unavailable("ECG grid not detected - no timebase")
     if from_image:
-        # One sample per pixel column at 25 mm/s paper speed. Derived here,
+        # One sample per pixel column at the stated paper speed. Derived here,
         # not taken from the caller: an fs argument left at the MIT-BIH 360 Hz
         # would scale every interval by a constant with no visible error.
-        fs = px_per_mm * PAPER_SPEED_MM_S
+        fs = px_per_mm * paper_speed_mm_s
 
     if isinstance(signal_or_leads, dict):
         leads = signal_or_leads

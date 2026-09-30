@@ -1,0 +1,21 @@
+{# Before / after / change table. Expects `rows` from records.compare. #}
+<div class="table-scroll" style="max-height: none; margin-bottom: 24px;">
+    <table class="data-table">
+        <thead><tr><th>Measure</th><th>Before</th><th>Now</th><th>Change</th><th>Note</th></tr></thead>
+        <tbody>
+        {% for r in rows %}
+        <tr class="{% if r.changed %}row-changed{% endif %}">
+            <td>{{ r.label }}</td>
+            <td>{{ r.before if r.before is not none else "—" }}</td>
+            <td>{{ r.after if r.after is not none else "—" }}</td>
+            <td>
+                {% if r.delta is not none %}
+                <span class="delta-{{ r.direction }}">{% if r.direction == 'up' %}▲ +{% elif r.direction == 'down' %}▼ {% else %}= {% endif %}{{ '%.1f' % r.delta }} {{ r.unit }}</span>
+                {% elif r.changed %}changed{% else %}—{% endif %}
+            </td>
+            <td>{{ r.note }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>

@@ -6,12 +6,11 @@ from flask import (
     send_file,
     abort
 )
+import json
 import os
 import re
-import json
 import time
 import uuid
-from datetime import datetime
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -19,7 +18,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from PIL import Image
 
 
 # Optional TensorFlow import with fallback
@@ -32,26 +30,40 @@ except Exception as e:
     TF_AVAILABLE = False
 
 from mlkit.registry import RegistryError, load_card, validate_card
-from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
+from ecg.parameters import analyse as analyse_ecg_parameters
 from ecg.digitize import extract_leads
 from ecg.clinical import clinical_report, doctor_notes as ecg_doctor_notes
 from ecg.beats import segment_signal
-from reporting.pdf import build_pdf_report, doctor_sections, verdict_section
+from reporting.pdf import build_pdf_report
+from reporting.study_reports import (
+    EEG_TASKS, render_study_pdf, eeg_verdict,
+    form_meta as _form_meta, slug as _slug,
+)
+# Re-exported for the test suite, which reaches these through `app`.
+from reporting.study_reports import (  # noqa: F401
+    pdf_value as _pdf_value, clinical_from_form as _clinical_from_form,
+    ecg_classification_rows as _ecg_classification_rows,
+)
 from eeg.interpretation import clinical_notes as eeg_clinical_notes
 from vision.interpretation import clinical_notes as mri_clinical_notes, mri_verdict
+from webapp.patients import bp as patients_bp
+from webapp.study_binding import (
+    bound_context, dumps, ecg_measurements, eeg_measurements, mri_measurements,
+    patient_form, report_fields, resolve, save_study_for,
+)
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
-    collect_metadata, finalize_metadata, metadata_rows, _clean_text,
+    collect_metadata, finalize_metadata, metadata_rows,
 )
+from vision.imageio import check_mri_input, load_dicom_rgb, load_mri_rgb
 from vision.gradcam import (
     generate_gradcam_heatmap, create_gradcam_overlay,
-    create_tumor_region_highlight, calculate_tumor_area, calculate_tumor_size,
-    calculate_tumor_location, calculate_severity, calculate_spread,
+    create_tumor_region_highlight, calculate_tumor_location,
 )
 
 # Optional DICOM support
 try:
-    import pydicom
+    import pydicom  # noqa: F401  (availability probe; loading is in vision.imageio)
     DICOM_AVAILABLE = True
 except Exception as e:
     print("pydicom import warning:", e)
@@ -80,6 +92,10 @@ os.makedirs(REPORT_FOLDER, exist_ok=True)
 os.makedirs("static/samples", exist_ok=True)
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Patient record store (SQLite + study files). Never swept; see records/.
+app.config["RECORDS_ROOT"] = os.environ.get("RECORDS_ROOT", "records_data")
+app.register_blueprint(patients_bp)
+app.context_processor(bound_context)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload limit
 
 
@@ -190,6 +206,7 @@ def get_brain_tumor_model():
             model, card = _load_validated(path, "mri", MRI_CARD_CLASSES, shape, prep)
             if model is not None:
                 print(f"Selected {path} (macro_f1={_card_macro_f1(path):.4f})")
+                card = dict(card, _name=os.path.splitext(os.path.basename(path))[0])
                 _brain_tumor_model = (model, card)
                 break
     return _brain_tumor_model
@@ -471,46 +488,16 @@ def load_dicom_as_pil(path):
     """Read a DICOM file and return a windowed RGB PIL image."""
     if not DICOM_AVAILABLE:
         raise ValueError("DICOM support requires the 'pydicom' package.")
-    ds = pydicom.dcmread(path)
-    arr = np.asarray(ds.pixel_array, dtype=np.float32)
-
-    # Apply modality rescaling (slope / intercept)
-    slope = float(getattr(ds, "RescaleSlope", 1.0) or 1.0)
-    intercept = float(getattr(ds, "RescaleIntercept", 0.0) or 0.0)
-    arr = arr * slope + intercept
-
-    # Window to a sensible display range (1st - 99th percentile)
-    lo = float(np.percentile(arr, 1))
-    hi = float(np.percentile(arr, 99))
-    if hi - lo < 1e-6:
-        hi = lo + 1.0
-    arr = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
-
-    if arr.ndim == 2:
-        rgb = np.stack([arr] * 3, axis=-1)
-    elif arr.ndim == 3 and arr.shape[-1] == 1:
-        rgb = np.repeat(arr, 3, axis=-1)
-    elif arr.ndim == 3 and arr.shape[-1] >= 3:
-        rgb = arr[:, :, :3]
-    else:
-        raise ValueError("Unsupported DICOM pixel array shape.")
-
-    rgb = (np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
-    return Image.fromarray(rgb, "RGB")
+    return load_dicom_rgb(path)
 
 
 def load_image_rgb(image_path):
-    """Load any supported image format (PIL formats + DICOM) as an RGB PIL Image."""
-    ext = os.path.splitext(str(image_path))[1].lower()
-    if ext in DICOM_EXTENSIONS:
-        return load_dicom_as_pil(image_path)
-    try:
-        img = Image.open(image_path)
-        img.load()
-        return img.convert("RGB")
-    except Exception as e:
-        raise ValueError(
-            f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}") from e
+    """Load any supported image (8/16-bit, float, palette, DICOM) as RGB.
+
+    16-bit input is windowed by percentile; Image.convert("RGB") would clip
+    it to white (see vision/imageio.py).
+    """
+    return load_mri_rgb(image_path)
 
 
 # ============================================================
@@ -902,12 +889,65 @@ def _signal_quality(report):
     return "Insufficient data"
 
 
+# The fields each result page carries to its PDF; a saved study stores the
+# same dict as its report, so both PDFs come from one builder.
+ECG_REPORT_KEYS = (
+    "prediction", "abnormal_type", "confidence", "atrial_probability",
+    "classifier", "classifier_error", "heart_rate", "rr_interval",
+    "qrs_duration", "pr_interval", "qt_interval", "qtc", "sdnn", "rmssd",
+    "rhythm", "st_segment", "axis", "interpretation", "recommendation",
+    "signal_quality", "input_source")
+MRI_REPORT_KEYS = ("prediction", "confidence", "findings", "recommendation",
+                   "location", "model_name")
+
+
+def dumps_safe(obj):
+    """A JSON-safe deep copy (numpy scalars and arrays become plain values)."""
+    return json.loads(dumps(obj))
+
+
+ECG_PAPER_SPEEDS = (25.0, 50.0)
+NO_ECG_TIMEBASE = (
+    "No timebase: this image has no detectable ECG grid and no recording "
+    "duration was entered, so no interval can be measured and no beat can "
+    "be classified. Re-submit with the recording duration (seconds shown "
+    "across the full image width) and the paper speed."
+)
+
+
+def _positive_float(raw):
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def ecg_image_timebase(digitized, duration_s, paper_speed):
+    """(px_per_mm, description) for a digitised ECG image, or (None, why).
+
+    A stated duration is exact and preferred: px/s = image width / duration,
+    and the paper speed converts that to px/mm (which also fixes the
+    10 mm/mV gain). Otherwise the detected grid is used.
+    """
+    if duration_s:
+        px_per_mm = digitized["width"] / duration_s / paper_speed
+        return px_per_mm, f"stated duration {duration_s:g} s at {paper_speed:g} mm/s"
+    if digitized["px_per_mm"] is not None:
+        return (digitized["px_per_mm"],
+                f"detected grid at {paper_speed:g} mm/s")
+    return None, "none"
+
+
 @app.route("/analyze_ecg", methods=["POST"])
 def analyze_ecg():
     file = request.files.get("ecg_file")
     sample_type = request.form.get("sample_type")
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return render_template("ecg.html", error=" ".join(meta_errors),
                                patient=entered, patient_fields=PATIENT_FIELDS,
@@ -935,6 +975,10 @@ def analyze_ecg():
                                gender_options=GENDER_OPTIONS)
 
     is_image = file_ext in IMAGE_EXTENSIONS
+    ecg_duration = _positive_float(request.form.get("ecg_duration"))
+    paper_speed = _positive_float(request.form.get("paper_speed"))
+    if paper_speed not in ECG_PAPER_SPEEDS:
+        paper_speed = 25.0
 
     try:
         if is_image:
@@ -947,13 +991,19 @@ def analyze_ecg():
             # timebase at all; analyse() then reports everything unavailable.
             # Derived before segmentation, because R-peak detection uses fs
             # for its refractory window.
-            px_per_mm = digitized["px_per_mm"]
-            image_fs = fs_from_scale(px_per_mm) if px_per_mm is not None else 360.0
-            X = prepare_beats(ecg_values, fs=image_fs)
-            report = analyse_ecg_parameters(leads, fs=image_fs,
-                                            px_per_mm=px_per_mm,
-                                            from_image=True)
-            input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
+            px_per_mm, timebase = ecg_image_timebase(
+                digitized, ecg_duration, paper_speed)
+            if px_per_mm is None:
+                # No timebase: nothing is measurable, and classifying beats
+                # segmented at a guessed rate would be confident nonsense.
+                X = None
+            else:
+                X = prepare_beats(ecg_values, fs=px_per_mm * paper_speed)
+            report = analyse_ecg_parameters(leads, px_per_mm=px_per_mm,
+                                            from_image=True,
+                                            paper_speed_mm_s=paper_speed)
+            input_source = (f"ECG image ({digitized['layout'].replace('_', ' ')}"
+                            f"; timebase: {timebase})")
         else:
             ecg_values = load_ecg_file(filepath)
             X = prepare_beats(ecg_values, fs=360.0)
@@ -963,12 +1013,16 @@ def analyze_ecg():
         # Beat classification is optional: the signal measurements below stand
         # on their own, so a missing classifier degrades the page rather than
         # failing it.
-        try:
-            beat_result = predict_ecg(X)
-            classifier_error = None
-        except NoECGModelError as e:
+        if X is None:
             beat_result = None
-            classifier_error = str(e)
+            classifier_error = NO_ECG_TIMEBASE
+        else:
+            try:
+                beat_result = predict_ecg(X)
+                classifier_error = None
+            except NoECGModelError as e:
+                beat_result = None
+                classifier_error = str(e)
 
         # Structured clinical reading: formula, value, reference range and
         # verdict per parameter. Built from the same Measurements shown above,
@@ -1027,7 +1081,24 @@ def analyze_ecg():
         result["notes"] = ecg_doctor_notes(clinical, result["prediction"],
                                            interpretation, recommendation)
 
-        return render_template("ecg.html", result=result, patient=patient,
+        saved = None
+        bound, _ = resolve(request.form)
+        if bound:
+            fields = {k: result.get(k) for k in ECG_REPORT_KEYS}
+            fields["clinical_json"] = dumps(result["clinical"])
+            _card = get_ecg_model()[1] or {}
+            saved = save_study_for(
+                "ecg", bound, form, result=dumps_safe(result),
+                report=report_fields(patient, fields),
+                verdict=result["notes"]["verdict"]["label"],
+                headline=result["notes"]["verdict"]["detail"],
+                model_name=classifier or "none",
+                model_version=_card.get("trained"),
+                measurements=ecg_measurements(report, beat_result),
+                files={"original": filepath,
+                       "waveform": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+
+        return render_template("ecg.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
                                patient_rows=metadata_rows(patient, PATIENT_FIELDS),
                                gender_options=GENDER_OPTIONS)
@@ -1043,12 +1114,69 @@ def analyze_ecg():
 # ANALYZE BRAIN TUMOR
 # ------------------------------------------------------------
 
+def mri_model_label(card):
+    """Human-readable identity of the MRI model that actually ran."""
+    if not card:
+        return NOT_PROVIDED
+    f1 = card.get("metrics", {}).get("macro_f1")
+    parts = [card.get("_name", "MRI classifier")]
+    if card.get("trained"):
+        parts.append(f"trained {card['trained']}")
+    if f1 is not None:
+        parts.append(f"macro-F1 {f1:.3f}")
+    return " · ".join(parts)
+
+
+def mri_attention_map(img, prediction, model, card):
+    """Grad-CAM overlay and the location of peak attention.
+
+    Only location is reported. Size and severity were derived from the share
+    of pixels above the map's own 90th percentile, which is ~10% for every
+    scan by construction, so they measured nothing and are gone. A failure
+    is returned for display rather than printed and swallowed.
+    """
+    out = {"heatmap_filename": None, "highlighted_filename": None,
+           "location": "Not applicable", "attention_error": None}
+    if prediction == "No Tumor" or model is None:
+        return out
+    try:
+        size = tuple(card["input_shape"][:2])
+        img_array = np.array(img.resize(size), dtype=np.float32)
+        input_tensor = preprocess_mri(img_array, card["preprocessing"])
+        predicted_class = list(MRI_CLASSES.values()).index(prediction)
+        heatmap = generate_gradcam_heatmap(model, input_tensor, predicted_class)
+        if heatmap is None or float(np.ptp(heatmap)) < 1e-6:
+            out["attention_error"] = "the model produced a flat attention map."
+            return out
+        overlay_name = "mri_heatmap_" + uuid.uuid4().hex[:8] + ".png"
+        create_gradcam_overlay(img, heatmap).save(
+            os.path.join(app.config["UPLOAD_FOLDER"], overlay_name))
+        region_name = "mri_highlight_" + uuid.uuid4().hex[:8] + ".png"
+        create_tumor_region_highlight(img, heatmap).save(
+            os.path.join(app.config["UPLOAD_FOLDER"], region_name))
+        out["heatmap_filename"] = overlay_name
+        out["highlighted_filename"] = region_name
+        if CV2_AVAILABLE:
+            mask = (heatmap >= np.percentile(heatmap, 90)).astype(np.uint8) * 255
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                           cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                out["location"] = calculate_tumor_location(
+                    max(contours, key=cv2.contourArea))
+    except Exception as e:
+        out["attention_error"] = str(e)
+    return out
+
+
 @app.route("/analyze_brain_tumor", methods=["POST"])
 def analyze_brain_tumor():
     file = request.files.get("mri_file")
     sample_name = request.form.get("sample_name")
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return render_template("brain_tumor.html", error=" ".join(meta_errors),
                                patient=entered, patient_fields=PATIENT_FIELDS,
@@ -1076,15 +1204,20 @@ def analyze_brain_tumor():
                                gender_options=GENDER_OPTIONS)
 
     try:
-        # Load image in any supported format (including DICOM)
+        # Load image in any supported format (including 16-bit and DICOM)
         img = load_image_rgb(filepath)
+        refusal = check_mri_input(img)
+        if refusal:
+            return render_template("brain_tumor.html", error=refusal,
+                                   patient=entered, patient_fields=PATIENT_FIELDS,
+                                   gender_options=GENDER_OPTIONS)
         try:
             res = predict_brain_tumor(filepath)
         except NoMRIModelError as e:
             # Nothing further on this page is meaningful without a
-            # classification -- the Grad-CAM, the tumour morphometry and the
-            # clinical wording are all downstream of it -- so this is a
-            # refusal, not a degraded render.
+            # classification -- the attention map and the clinical wording
+            # are downstream of it -- so this is a refusal, not a degraded
+            # render.
             return render_template("brain_tumor.html",
                                    error=str(e), patient=entered,
                                    patient_fields=PATIENT_FIELDS,
@@ -1094,62 +1227,8 @@ def analyze_brain_tumor():
         display_filename = "mri_analysis_" + uuid.uuid4().hex[:8] + ".png"
         img.save(os.path.join(app.config["UPLOAD_FOLDER"], display_filename))
 
-        # Generate Grad-CAM heatmap if tumor detected
-        heatmap_filename = None
-        highlighted_filename = None
-        area = 0.0
-        width = 0
-        height = 0
-        location = "Not applicable"
-        severity = "Not applicable"
-        spread = "Not applicable"
-
-        if res["prediction"] != "No Tumor":
-            try:
-                model, card = get_brain_tumor_model()
-                if model is not None:
-                    # Prepare image exactly as the card specifies
-                    size = tuple(card["input_shape"][:2])
-                    img_array = np.array(img.resize(size), dtype=np.float32)
-                    input_tensor = preprocess_mri(img_array, card["preprocessing"])
-                    
-                    # Get predicted class index
-                    predicted_class = list(MRI_CLASSES.values()).index(res["prediction"])
-                    
-                    # Generate Grad-CAM heatmap
-                    heatmap = generate_gradcam_heatmap(model, input_tensor, predicted_class)
-                    
-                    if heatmap is not None:
-                        # Create heatmap overlay image
-                        gradcam_image = create_gradcam_overlay(img, heatmap)
-                        heatmap_filename = "mri_heatmap_" + uuid.uuid4().hex[:8] + ".png"
-                        gradcam_image.save(os.path.join(app.config["UPLOAD_FOLDER"], heatmap_filename))
-                        
-                        # Create highlighted tumor region
-                        region_image = create_tumor_region_highlight(img, heatmap)
-                        highlighted_filename = "mri_highlight_" + uuid.uuid4().hex[:8] + ".png"
-                        region_image.save(os.path.join(app.config["UPLOAD_FOLDER"], highlighted_filename))
-                        
-                        # Calculate analysis metrics
-                        threshold = np.percentile(heatmap, 90)
-                        tumor_mask = (heatmap >= threshold).astype(np.uint8) * 255
-                        
-                        if CV2_AVAILABLE:
-                            kernel = np.ones((5, 5), np.uint8)
-                            tumor_mask = cv2.morphologyEx(tumor_mask, cv2.MORPH_OPEN, kernel)
-                            tumor_mask = cv2.morphologyEx(tumor_mask, cv2.MORPH_CLOSE, kernel)
-                            
-                            contours, _ = cv2.findContours(tumor_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            if contours:
-                                largest_contour = max(contours, key=cv2.contourArea)
-                                area = calculate_tumor_area(tumor_mask)
-                                width, height = calculate_tumor_size(largest_contour)
-                                location = calculate_tumor_location(largest_contour)
-                                severity = calculate_severity(area)
-                                spread = calculate_spread(area)
-                        
-            except Exception as e:
-                print(f"Grad-CAM generation failed: {e}")
+        model, card = get_brain_tumor_model()
+        attention = mri_attention_map(img, res["prediction"], model, card)
 
         result = {
             "image_filename": display_filename,
@@ -1159,19 +1238,31 @@ def analyze_brain_tumor():
             "raw_probabilities": res["raw_probabilities"],
             "findings": res["findings"],
             "recommendation": res["recommendation"],
-            "heatmap_filename": heatmap_filename,
-            "highlighted_filename": highlighted_filename,
-            "area": f"{area:.2f}",
-            "width": width,
-            "height": height,
-            "location": location,
-            "severity": severity,
-            "spread": spread
+            "model_name": mri_model_label(card),
+            **attention,
         }
 
         result["verdict"] = mri_verdict(result["prediction"])
         result["notes"] = mri_clinical_notes(result["prediction"], result)
-        return render_template("brain_tumor.html", result=result, patient=patient,
+
+        saved = None
+        bound, _ = resolve(request.form)
+        if bound:
+            up = app.config["UPLOAD_FOLDER"]
+            saved = save_study_for(
+                "mri", bound, form, result=dumps_safe(result),
+                report=report_fields(patient, {k: result.get(k) for k in MRI_REPORT_KEYS}),
+                verdict=result["verdict"]["label"],
+                headline=f"{result['prediction']} ({result['confidence']}%)",
+                model_name=(card or {}).get("_name"),
+                model_version=(card or {}).get("trained"),
+                measurements=mri_measurements(result),
+                files={"original": filepath,
+                       "scan": os.path.join(up, display_filename),
+                       "heatmap": result["heatmap_filename"] and os.path.join(up, result["heatmap_filename"]),
+                       "highlight": result["highlighted_filename"] and os.path.join(up, result["highlighted_filename"])})
+
+        return render_template("brain_tumor.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
                                patient_rows=metadata_rows(patient, PATIENT_FIELDS),
                                gender_options=GENDER_OPTIONS)
@@ -1260,217 +1351,9 @@ def analyze_satellite():
 # PDF REPORT BUILDER -- document assembly lives in reporting/pdf.py
 # ------------------------------------------------------------
 
-def _form_meta(form, fields):
-    """Rebuild a metadata dict from the hidden fields posted by a result page."""
-    meta = {key: (_clean_text(form.get(key), 1000) or NOT_PROVIDED) for key, _ in fields}
-    meta["report_id"] = _clean_text(form.get("report_id")) or ("RPT-" + uuid.uuid4().hex[:10].upper())
-    meta["generated_at"] = _clean_text(form.get("generated_at")) or datetime.now().strftime("%d %b %Y, %H:%M:%S")
-    return meta
-
-
-def _slug(value, fallback):
-    """Filename-safe token derived from a metadata value."""
-    if not value or value == NOT_PROVIDED:
-        return fallback
-    cleaned = "".join(c if c.isalnum() else "_" for c in value).strip("_")
-    return cleaned[:40] or fallback
-
-
 # ------------------------------------------------------------
 # DOWNLOAD REPORTS (PDF)
 # ------------------------------------------------------------
-
-def _pdf_value(raw):
-    """Render an unmeasured parameter explicitly in the PDF.
-
-    A dash in a clinical report is ambiguous - it could mean zero, or missing.
-    "Not measurable" says which.
-    """
-    if raw is None or raw.strip() in {"", "—", "-"}:
-        return "Not measurable"
-    return raw
-
-
-def _clinical_from_form(form):
-    """Rebuild the structured reading from the measurements posted back.
-
-    Returns None when the page posted no measurement payload -- an older
-    result page, or a direct post -- so the report simply omits the section
-    rather than inventing one.
-    """
-    raw = form.get("clinical_json")
-    if not raw:
-        return None
-    try:
-        data = json.loads(raw)
-    except (ValueError, TypeError):
-        return None
-    if not isinstance(data, dict) or "parameters" not in data:
-        return None
-    return data
-
-
-def _ecg_classification_rows(form):
-    """Rows for the classification table, or an explicit statement of absence.
-
-    A report must never imply a classification happened when it did not, so
-    when no classifier ran the table carries the reason instead of a row of
-    em-dashes that reads like a missing measurement.
-    """
-    prediction = (form.get("prediction") or "").strip()
-    if not prediction:
-        return [
-            ("Parameter", "Result"),
-            ("Overall Rhythm Classification", "Not performed"),
-            ("Reason", form.get("classifier_error")
-                       or "No validated ECG classifier was installed."),
-            ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
-            ("Input Source", form.get("input_source", NOT_PROVIDED)),
-        ]
-    return [
-        ("Parameter", "Result"),
-        ("Overall Rhythm Classification", prediction),
-        ("Abnormality Class", form.get("abnormal_type", NOT_PROVIDED)),
-        ("Classifier", form.get("classifier", NOT_PROVIDED)),
-        ("Classifier Confidence", f"{form.get('confidence', '—')}%"),
-        ("Supraventricular (S) Beat Probability", f"{form.get('atrial_probability', '—')}%"),
-        ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
-        ("Input Source", form.get("input_source", NOT_PROVIDED)),
-    ]
-
-
-@app.route("/download_ecg_report", methods=["POST"])
-def download_ecg_report():
-    form = request.form
-    meta = _form_meta(form, PATIENT_FIELDS)
-
-    # The structured reading is carried from the result page as JSON. It is
-    # display data echoed back, not a re-measurement: the report can only be
-    # as trustworthy as the page that produced it. It is escaped like every
-    # other field on the way into the PDF, and a malformed or absent payload
-    # omits the section rather than substituting anything.
-    clinical = _clinical_from_form(form)
-    notes = ecg_doctor_notes(clinical, form.get("prediction"),
-                             form.get("interpretation"),
-                             form.get("recommendation"))
-
-    sections = [
-        verdict_section("ECG Classification", notes["verdict"]),
-        ("text", "Clinical Impression", notes["impression"]),
-        ("table", "1. Beat Classification Result", _ecg_classification_rows(form)),
-        ("table", "2. ECG Waveform Parameters", [
-            ("Measurement", "Value"),
-            ("Heart Rate", _pdf_value(form.get("heart_rate"))),
-            ("RR Interval", _pdf_value(form.get("rr_interval"))),
-            ("QRS Duration", _pdf_value(form.get("qrs_duration"))),
-            ("PR Interval", _pdf_value(form.get("pr_interval"))),
-            ("QT Interval", _pdf_value(form.get("qt_interval"))),
-            ("QTc (Corrected)", _pdf_value(form.get("qtc"))),
-            ("HRV SDNN", _pdf_value(form.get("sdnn"))),
-            ("HRV RMSSD", _pdf_value(form.get("rmssd"))),
-            ("Rhythm", _pdf_value(form.get("rhythm"))),
-            ("ST Segment", _pdf_value(form.get("st_segment"))),
-            ("QRS Axis", _pdf_value(form.get("axis"))),
-        ]),
-    ]
-    if clinical:
-        sections.append(("table", "3. Parameters, Formulas & Reference Ranges",
-                         [("Parameter", "Value / Range / Verdict")] +
-                         [(r["label"],
-                           f"{r['value']}  |  normal {r['range']}  |  "
-                           f"{r['verdict'] or (r['reason'] or 'not measurable')}")
-                          for r in clinical["parameters"]]))
-        if clinical["status"]["findings"]:
-            sections.append(("table", "4. Supporting Findings",
-                             [("#", "Finding")] +
-                             [(str(i + 1), f) for i, f in
-                              enumerate(clinical["status"]["findings"])]))
-    sections += doctor_sections(notes)
-
-    buffer = build_pdf_report(
-        title="ECG ANALYSIS REPORT",
-        subtitle="AI Diagnostic Summary — AAMI 5-class beat classifier + signal measurements",
-        accent="#4f46e5",
-        meta=meta,
-        meta_fields=PATIENT_FIELDS,
-        meta_heading="Patient & Study Details",
-        sections=sections,
-        disclaimer=(
-            "Disclaimer: This report is generated by a research prototype and is not a "
-            "medical device. All findings, measurements and recommendations are "
-            "model-derived estimates and must be verified by a qualified cardiologist "
-            "before any clinical decision is made."
-        ),
-        footer_text="Unified AI Diagnostic Platform — ECG Analysis (research use only)"
-    )
-
-    name = _slug(meta.get("patient_id"), _slug(meta.get("patient_name"), "unidentified"))
-    return send_file(buffer, as_attachment=True,
-                     download_name=f"ECG_Report_{name}.pdf",
-                     mimetype="application/pdf")
-
-
-@app.route("/download_brain_tumor_report", methods=["POST"])
-def download_brain_tumor_report():
-    form = request.form
-    meta = _form_meta(form, PATIENT_FIELDS)
-    prediction = form.get("prediction", NOT_PROVIDED)
-
-    notes = mri_clinical_notes(prediction, form)
-    sections = [
-        verdict_section("MRI Classification", mri_verdict(prediction)),
-        ("text", "Clinical Impression", notes["impression"]),
-        ("table", "1. Classification Result", [
-            ("Diagnostic Attribute", "AI System Evaluation"),
-            ("Primary Tumor Classification", prediction),
-            ("Model Confidence Score", f"{form.get('confidence', '—')}%"),
-            ("Model", "VGG16 transfer-learning classifier (4-class)"),
-        ]),
-    ]
-
-    if prediction and prediction != "No Tumor":
-        area_val = form.get('area', '—')
-        width_val = form.get('width', '—')
-        height_val = form.get('height', '—')
-        location_val = form.get("location", NOT_PROVIDED)
-        severity_val = form.get("severity", NOT_PROVIDED)
-        spread_val = form.get("spread", NOT_PROVIDED)
-        sections.append(("table", "2. Lesion Analysis Metrics (Grad-CAM derived)", [
-            ("Metric", "Estimated Value"),
-            ("Area of Activation", f"{area_val}% of image"),
-            ("Bounding Width", f"{width_val} px"),
-            ("Bounding Height", f"{height_val} px"),
-            ("Approximate Location", location_val),
-            ("Severity Indicator", severity_val),
-            ("Spread Indicator", spread_val),
-        ]))
-
-    sections.append(("text", "3. Radiological Findings Summary",
-                     form.get("findings", NOT_PROVIDED)))
-    sections += doctor_sections(notes)
-
-    buffer = build_pdf_report(
-        title="BRAIN TUMOR MRI DIAGNOSTIC REPORT",
-        subtitle="AI Multi-Class MRI Classification with Grad-CAM Localization",
-        accent="#7c3aed",
-        meta=meta,
-        meta_fields=PATIENT_FIELDS,
-        meta_heading="Patient & Study Details",
-        sections=sections,
-        disclaimer=(
-            "Disclaimer: This report is generated by a research prototype and is not a "
-            "medical device. Lesion metrics are derived from model activation maps, not "
-            "from calibrated radiological measurement, and must be validated by a "
-            "board-certified radiologist."
-        ),
-        footer_text="Unified AI Diagnostic Platform — Brain Tumor MRI Analysis (research use only)"
-    )
-
-    name = _slug(meta.get("patient_id"), _slug(meta.get("patient_name"), "unidentified"))
-    return send_file(buffer, as_attachment=True,
-                     download_name=f"MRI_Report_{name}.pdf",
-                     mimetype="application/pdf")
-
 
 @app.route("/download_satellite_report", methods=["POST"])
 def download_satellite_report():
@@ -1523,8 +1406,6 @@ def download_satellite_report():
 # ANALYZE EEG
 # ------------------------------------------------------------
 
-EEG_TASKS = {"seizure": "Epileptiform / seizure activity",
-             "alzheimer": "Cortical slowing (dementia screen)"}
 _eeg_models = {}
 
 
@@ -1552,9 +1433,12 @@ def _eeg_to_signal(filepath, ext, duration):
         signal, fs, names = read_recording(filepath)
         # Channels are averaged: this pipeline localises in time, not space.
         return np.mean(signal, axis=0), fs, f"{len(names)} channels at {fs:.0f} Hz"
-    from eeg.digitize import digitize
-    signal, fs, source = digitize(filepath, duration_s=duration, target_fs=128.0)
-    return signal, fs, f"digitised from image ({source})"
+    from eeg.digitize import digitize_channels
+    signals, fs, source, n_ch = digitize_channels(filepath, duration_s=duration,
+                                                  target_fs=128.0)
+    # Each channel is traced in its own band, then averaged like the EDF path.
+    return (np.mean(signals, axis=0), fs,
+            f"{n_ch} channels digitised from image ({source})")
 
 
 def create_eeg_plot(result, bands, filename):
@@ -1585,22 +1469,6 @@ def create_eeg_plot(result, bands, filename):
     plt.close(fig)
 
 
-def eeg_verdict(model_used, episodes):
-    """Overall NORMAL / ABNORMAL call for an EEG study.
-
-    Without a model nothing was classified, so the answer is NOT ASSESSED:
-    measurements alone never make a recording "normal".
-    """
-    if not model_used:
-        return {"label": "NOT ASSESSED", "tone": "warn",
-                "detail": "No validated model installed; no window was classified."}
-    if episodes:
-        return {"label": "ABNORMAL", "tone": "bad",
-                "detail": f"{episodes} anomalous episode(s) detected."}
-    return {"label": "NORMAL", "tone": "good",
-            "detail": "No episode crossed the detection threshold."}
-
-
 def _eeg_page(**kw):
     kw.setdefault("patient", {})
     return render_template("eeg.html", patient_fields=PATIENT_FIELDS,
@@ -1614,7 +1482,10 @@ def analyze_eeg():
     from eeg.inference import analyse_signal, summarise
     from eeg.metrics import BANDS
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return _eeg_page(error=" ".join(meta_errors), patient=entered)
     patient = finalize_metadata(entered, PATIENT_FIELDS)
@@ -1702,82 +1573,40 @@ def analyze_eeg():
     }
     view["notes"] = eeg_clinical_notes(task, view["verdict"]["label"],
                                        view["report"])
-    return _eeg_page(result=view, patient=patient,
+    saved = None
+    bound, _ = resolve(request.form)
+    if bound:
+        saved = save_study_for(
+            "eeg", bound, form, result=dumps_safe(view),
+            report=report_fields(patient, {"eeg_json": dumps(view["report"])}),
+            verdict=view["verdict"]["label"], headline=summary["headline"],
+            model_name=f"eeg_{task}" if view["model_used"] else "none",
+            model_version=(card or {}).get("trained"),
+            measurements=eeg_measurements(view["report"]),
+            files={"original": filepath,
+                   "timeline": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+    return _eeg_page(result=view, patient=patient, saved=saved,
                      patient_rows=metadata_rows(patient, PATIENT_FIELDS))
+
+
+@app.route("/download_ecg_report", methods=["POST"])
+def download_ecg_report():
+    return _send_study_pdf("ecg", request.form)
+
+
+@app.route("/download_brain_tumor_report", methods=["POST"])
+def download_brain_tumor_report():
+    return _send_study_pdf("mri", request.form)
 
 
 @app.route("/download_eeg_report", methods=["POST"])
 def download_eeg_report():
-    form = request.form
-    meta = _form_meta(form, PATIENT_FIELDS)
-    try:
-        r = json.loads(form.get("eeg_json") or "")
-        if not isinstance(r, dict):
-            raise ValueError
-    except ValueError:
-        r = {}
+    return _send_study_pdf("eeg", request.form)
 
-    def v(key, fmt="{}"):
-        return fmt.format(r[key]) if r.get(key) is not None else NOT_PROVIDED
 
-    assessed = bool(r.get("model_used"))
-    verdict = eeg_verdict(assessed, r.get("episodes_n") or 0)
-    task_key = r.get("task_key") if r.get("task_key") in EEG_TASKS else "seizure"
-    notes = eeg_clinical_notes(task_key, verdict["label"], r)
-    sections = [
-        verdict_section("EEG Classification", verdict),
-        ("text", "Clinical Impression", notes["impression"]),
-        ("table", "1. Recording & Analysis", [
-            ("Attribute", "Value"),
-            ("Clinical Question", v("task")),
-            ("Input Source", v("source")),
-            ("Duration", v("duration_s", "{} s")),
-            ("Windows Analysed", v("n_windows")),
-            ("Artifact Windows", v("artifact_windows")),
-            ("Model Assessment", "Performed" if assessed else "Not assessed (no validated model)"),
-        ]),
-        ("table", "2. Findings", [
-            ("Measure", "Value"),
-            ("Detected Episodes", v("episodes_n") if assessed else "—"),
-            ("Anomaly Burden", v("burden_pct", "{}%") if assessed else "—"),
-            ("Mean Spike Rate", v("mean_spikes", "{} /s")),
-        ]),
-        ("text", "3. Automated Summary", r.get("headline") or NOT_PROVIDED),
-    ]
-    if r.get("band_means"):
-        sections.append(("table", "4. Mean Relative Spectral Power",
-                         [("Band", "Share of 0.5–45 Hz power")]
-                         + [(str(b), str(x)) for b, x in r["band_means"].items()]))
-    if r.get("episodes"):
-        sections.append(("table", "5. Detected Episodes",
-                         [("Onset / Offset (s)", "Duration (s) · Peak · Spikes/s")]
-                         + [(f"{e['onset_s']:.1f} – {e['offset_s']:.1f}",
-                             f"{e['duration_s']:.1f} · {e['peak_score']:.3f} · "
-                             f"{e['spike_rate_per_s']:.2f}")
-                            for e in r["episodes"]]))
-
-    sections += doctor_sections(notes)
-
-    buffer = build_pdf_report(
-        title="EEG ANALYSIS REPORT",
-        subtitle="Windowed Spectral, Spike & Episode Analysis",
-        accent="#0d9488",
-        meta=meta,
-        meta_fields=PATIENT_FIELDS,
-        meta_heading="Patient & Study Details",
-        sections=sections,
-        disclaimer=(
-            "Disclaimer: Research prototype, not a medical device. All values are "
-            "model- or signal-derived. Channels are averaged, so findings are "
-            "localised in time, not in space. \"Not assessed\" does not mean normal. "
-            "Clinical review by a qualified neurologist is required."
-        ),
-        footer_text="Unified AI Diagnostic Platform — EEG Analysis"
-    )
-
-    name = _slug(meta.get("patient_id"), _slug(meta.get("patient_name"), "patient"))
-    return send_file(buffer, as_attachment=True,
-                     download_name=f"EEG_Report_{name}.pdf",
+def _send_study_pdf(modality, data, images=()):
+    buffer, filename = render_study_pdf(modality, data, images)
+    return send_file(buffer, as_attachment=True, download_name=filename,
                      mimetype="application/pdf")
 
 
@@ -1787,4 +1616,8 @@ def download_eeg_report():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+    # The portal has no login, and it holds patient records. It listens on
+    # this machine only unless PORTAL_HOST deliberately opens it (e.g.
+    # PORTAL_HOST=0.0.0.0 on a trusted hospital network).
+    host = os.environ.get("PORTAL_HOST", "127.0.0.1")
+    app.run(host=host, port=port, debug=False, use_reloader=False)
