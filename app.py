@@ -1552,9 +1552,12 @@ def _eeg_to_signal(filepath, ext, duration):
         signal, fs, names = read_recording(filepath)
         # Channels are averaged: this pipeline localises in time, not space.
         return np.mean(signal, axis=0), fs, f"{len(names)} channels at {fs:.0f} Hz"
-    from eeg.digitize import digitize
-    signal, fs, source = digitize(filepath, duration_s=duration, target_fs=128.0)
-    return signal, fs, f"digitised from image ({source})"
+    from eeg.digitize import digitize_channels
+    signals, fs, source, n_ch = digitize_channels(filepath, duration_s=duration,
+                                                  target_fs=128.0)
+    # Each channel is traced in its own band, then averaged like the EDF path.
+    return (np.mean(signals, axis=0), fs,
+            f"{n_ch} channels digitised from image ({source})")
 
 
 def create_eeg_plot(result, bands, filename):

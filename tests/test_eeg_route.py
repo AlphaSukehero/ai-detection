@@ -142,3 +142,16 @@ def test_eeg_page_shows_the_same_advice(client):
                        content_type="multipart/form-data").get_data(as_text=True)
     for heading in ("Clinical Impression", "Recommendations", "Precautions"):
         assert heading in html, heading
+
+
+def test_eeg_montage_image_is_read_channel_by_channel(client):
+    from tests.test_eeg_montage import _montage
+    img, _ = _montage(n=6, width=2000, duration=20.0)
+    buf = io.BytesIO()
+    Image.fromarray((img * 255).astype(np.uint8)).save(buf, format="PNG")
+    buf.seek(0)
+    data = dict(PATIENT, duration="20", task="seizure",
+                eeg_file=(buf, "montage.png"))
+    html = client.post("/analyze_eeg", data=data,
+                       content_type="multipart/form-data").get_data(as_text=True)
+    assert "6 channels digitised from image" in html
