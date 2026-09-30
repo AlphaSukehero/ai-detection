@@ -46,3 +46,6 @@ Thumbs.db
 data/raw/
 data/processed/
 .gstack/
+
+# Patient record store (database + study files). Real patient data: never commit.
+records_data/
