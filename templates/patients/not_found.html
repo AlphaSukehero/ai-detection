@@ -1,0 +1,9 @@
+{% extends "patients/base.html" %}
+{% block title %}Not found{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="panel-title"><span>⚠</span> Not found</div>
+    <p style="margin-bottom: 16px;">{{ message }}</p>
+    <a href="/patients" class="btn-primary">← Back to patient search</a>
+</div>
+{% endblock %}

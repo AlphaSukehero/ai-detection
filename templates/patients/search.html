@@ -1,0 +1,37 @@
+{% extends "patients/base.html" %}
+{% block title %}Patients{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="panel-title"><span>🗂️</span> Patient Registry</div>
+    <div class="panel-subtitle">Find a returning patient by ID, name or phone number — or register a new one. Every study done for a registered patient is kept in their record.</div>
+
+    <form method="GET" action="/patients" class="records-toolbar">
+        <input type="search" name="q" value="{{ q }}" placeholder="PT-000123, name or phone" autofocus aria-label="Search patients">
+        <button type="submit" class="btn-sample">🔍 Search</button>
+        <a href="/patients/new" class="btn-primary records-cta">＋ Register patient</a>
+    </form>
+
+    {% if results %}
+    <div class="table-scroll" style="max-height: none;">
+        <table class="data-table">
+            <thead><tr><th>Patient ID</th><th>Name</th><th>Age</th><th>Sex</th><th>Phone</th><th>Registered</th><th></th></tr></thead>
+            <tbody>
+            {% for p in results %}
+                <tr>
+                    <td><a href="/patients/{{ p.id }}"><strong>{{ p.id }}</strong></a></td>
+                    <td>{{ p.name }}</td>
+                    <td>{{ p.age if p.age is not none else "—" }}</td>
+                    <td>{{ p.sex or "—" }}</td>
+                    <td>{{ p.phone or "—" }}</td>
+                    <td>{{ p.created_at[:10] }}</td>
+                    <td><a href="/patients/{{ p.id }}">Open →</a></td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="records-empty">{% if q %}No patient matches “{{ q }}”.{% else %}No patients registered yet.{% endif %} <a href="/patients/new">Register a patient</a>.</p>
+    {% endif %}
+</div>
+{% endblock %}

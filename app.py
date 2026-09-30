@@ -38,6 +38,7 @@ from ecg.beats import segment_signal
 from reporting.pdf import build_pdf_report, doctor_sections, verdict_section
 from eeg.interpretation import clinical_notes as eeg_clinical_notes
 from vision.interpretation import clinical_notes as mri_clinical_notes, mri_verdict
+from webapp.patients import bp as patients_bp
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
     collect_metadata, finalize_metadata, metadata_rows, _clean_text,
@@ -79,6 +80,9 @@ os.makedirs(REPORT_FOLDER, exist_ok=True)
 os.makedirs("static/samples", exist_ok=True)
 
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
+# Patient record store (SQLite + study files). Never swept; see records/.
+app.config["RECORDS_ROOT"] = os.environ.get("RECORDS_ROOT", "records_data")
+app.register_blueprint(patients_bp)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload limit
 
 
@@ -1798,4 +1802,8 @@ def download_eeg_report():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5050))
-    app.run(host="127.0.0.1", port=port, debug=False, use_reloader=False)
+    # The portal has no login, and it holds patient records. It listens on
+    # this machine only unless PORTAL_HOST deliberately opens it (e.g.
+    # PORTAL_HOST=0.0.0.0 on a trusted hospital network).
+    host = os.environ.get("PORTAL_HOST", "127.0.0.1")
+    app.run(host=host, port=port, debug=False, use_reloader=False)

@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Patients{% endblock %} | AI Medical Engine</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+    <div class="page">
+        <nav class="navbar">
+            <a href="/" class="nav-brand">
+                <div class="nav-logo" style="background: var(--mri-gradient)">🗂️</div>
+                <div class="nav-brand-text">
+                    <h1>PATIENT RECORDS</h1>
+                    <p>Registry, History &amp; Reports</p>
+                </div>
+            </a>
+            {% with active = "/patients" %}{% include "_nav_links.html" %}{% endwith %}
+        </nav>
+        <div class="main-container">
+            {% block content %}{% endblock %}
+        </div>
+        <footer>
+            <p>&copy; 2026 Unified AI Analysis Engine. Research prototype — records are stored on this machine only.</p>
+        </footer>
+    </div>
+</body>
+</html>

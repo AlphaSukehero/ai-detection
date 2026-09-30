@@ -1,0 +1,64 @@
+{% extends "patients/base.html" %}
+{% block title %}{{ patient.name }} · {{ patient.id }}{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="records-header">
+        <div>
+            <div class="records-id">{{ patient.id }}</div>
+            <h2 class="records-name">{{ patient.name }}</h2>
+            <div class="records-facts">
+                <span>Age: <strong>{{ patient.age if patient.age is not none else "—" }}</strong></span>
+                <span>Sex: <strong>{{ patient.sex or "—" }}</strong></span>
+                <span>DOB: <strong>{{ patient.dob or "—" }}</strong></span>
+                <span>Phone: <strong>{{ patient.phone or "—" }}</strong></span>
+                <span>Registered: <strong>{{ patient.created_at[:10] }}</strong></span>
+            </div>
+            {% if patient.address %}<div class="records-facts"><span>Address: <strong>{{ patient.address }}</strong></span></div>{% endif %}
+        </div>
+        {% if studies %}
+        <a href="/patients/{{ patient.id }}/history.pdf" class="btn-primary records-cta">📥 Complete history (PDF)</a>
+        {% endif %}
+    </div>
+    {% if patient.notes %}
+    <div class="records-notes"><strong>Standing notes:</strong> {{ patient.notes }}</div>
+    {% endif %}
+
+    <h3 class="records-h3">New study for this patient</h3>
+    <div class="records-actions">
+        {% for mod, path in modality_pages.items() %}
+        <a href="{{ path }}?patient={{ patient.id }}" class="btn-sample">＋ {{ modality_labels[mod] }}</a>
+        {% endfor %}
+    </div>
+</div>
+
+<div class="panel">
+    <div class="panel-title"><span>🕑</span> Visit Timeline</div>
+    {% if studies %}
+    <div class="table-scroll" style="max-height: none;">
+        <table class="data-table">
+            <thead><tr><th>Study date</th><th>Study</th><th>Type</th><th>Verdict</th><th>Finding</th><th>Referred by</th><th></th></tr></thead>
+            <tbody>
+            {% for s in studies %}
+            <tr>
+                <td>{{ s.study_date }}</td>
+                <td><a href="/patients/{{ patient.id }}/studies/{{ s.id }}">{{ s.id }}</a></td>
+                <td>{{ modality_labels[s.modality] }}</td>
+                <td><span class="verdict-badge verdict-{{ (s.verdict or 'NOT ASSESSED')|lower|replace(' ', '-') }}">{{ s.verdict or "NOT ASSESSED" }}</span></td>
+                <td>{{ s.headline or "—" }}</td>
+                <td>{{ s.referring_physician or "—" }}</td>
+                <td class="records-links">
+                    <a href="/patients/{{ patient.id }}/studies/{{ s.id }}">Open</a>
+                    <a href="/patients/{{ patient.id }}/studies/{{ s.id }}/pdf">PDF</a>
+                </td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <p class="records-empty">No studies yet. Start one with the buttons above; it will be saved to this record automatically.</p>
+    {% endif %}
+</div>
+
+{% block history_tools %}{% endblock %}
+{% endblock %}
