@@ -32,7 +32,7 @@ except Exception as e:
     TF_AVAILABLE = False
 
 from mlkit.registry import RegistryError, load_card, validate_card
-from ecg.parameters import analyse as analyse_ecg_parameters, fs_from_scale
+from ecg.parameters import analyse as analyse_ecg_parameters
 from ecg.digitize import extract_leads
 from ecg.clinical import clinical_report, doctor_notes as ecg_doctor_notes
 from ecg.beats import segment_signal
@@ -902,6 +902,39 @@ def _signal_quality(report):
     return "Insufficient data"
 
 
+ECG_PAPER_SPEEDS = (25.0, 50.0)
+NO_ECG_TIMEBASE = (
+    "No timebase: this image has no detectable ECG grid and no recording "
+    "duration was entered, so no interval can be measured and no beat can "
+    "be classified. Re-submit with the recording duration (seconds shown "
+    "across the full image width) and the paper speed."
+)
+
+
+def _positive_float(raw):
+    try:
+        value = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def ecg_image_timebase(digitized, duration_s, paper_speed):
+    """(px_per_mm, description) for a digitised ECG image, or (None, why).
+
+    A stated duration is exact and preferred: px/s = image width / duration,
+    and the paper speed converts that to px/mm (which also fixes the
+    10 mm/mV gain). Otherwise the detected grid is used.
+    """
+    if duration_s:
+        px_per_mm = digitized["width"] / duration_s / paper_speed
+        return px_per_mm, f"stated duration {duration_s:g} s at {paper_speed:g} mm/s"
+    if digitized["px_per_mm"] is not None:
+        return (digitized["px_per_mm"],
+                f"detected grid at {paper_speed:g} mm/s")
+    return None, "none"
+
+
 @app.route("/analyze_ecg", methods=["POST"])
 def analyze_ecg():
     file = request.files.get("ecg_file")
@@ -935,6 +968,10 @@ def analyze_ecg():
                                gender_options=GENDER_OPTIONS)
 
     is_image = file_ext in IMAGE_EXTENSIONS
+    ecg_duration = _positive_float(request.form.get("ecg_duration"))
+    paper_speed = _positive_float(request.form.get("paper_speed"))
+    if paper_speed not in ECG_PAPER_SPEEDS:
+        paper_speed = 25.0
 
     try:
         if is_image:
@@ -947,13 +984,19 @@ def analyze_ecg():
             # timebase at all; analyse() then reports everything unavailable.
             # Derived before segmentation, because R-peak detection uses fs
             # for its refractory window.
-            px_per_mm = digitized["px_per_mm"]
-            image_fs = fs_from_scale(px_per_mm) if px_per_mm is not None else 360.0
-            X = prepare_beats(ecg_values, fs=image_fs)
-            report = analyse_ecg_parameters(leads, fs=image_fs,
-                                            px_per_mm=px_per_mm,
-                                            from_image=True)
-            input_source = f"ECG image ({digitized['layout'].replace('_', ' ')})"
+            px_per_mm, timebase = ecg_image_timebase(
+                digitized, ecg_duration, paper_speed)
+            if px_per_mm is None:
+                # No timebase: nothing is measurable, and classifying beats
+                # segmented at a guessed rate would be confident nonsense.
+                X = None
+            else:
+                X = prepare_beats(ecg_values, fs=px_per_mm * paper_speed)
+            report = analyse_ecg_parameters(leads, px_per_mm=px_per_mm,
+                                            from_image=True,
+                                            paper_speed_mm_s=paper_speed)
+            input_source = (f"ECG image ({digitized['layout'].replace('_', ' ')}"
+                            f"; timebase: {timebase})")
         else:
             ecg_values = load_ecg_file(filepath)
             X = prepare_beats(ecg_values, fs=360.0)
@@ -963,12 +1006,16 @@ def analyze_ecg():
         # Beat classification is optional: the signal measurements below stand
         # on their own, so a missing classifier degrades the page rather than
         # failing it.
-        try:
-            beat_result = predict_ecg(X)
-            classifier_error = None
-        except NoECGModelError as e:
+        if X is None:
             beat_result = None
-            classifier_error = str(e)
+            classifier_error = NO_ECG_TIMEBASE
+        else:
+            try:
+                beat_result = predict_ecg(X)
+                classifier_error = None
+            except NoECGModelError as e:
+                beat_result = None
+                classifier_error = str(e)
 
         # Structured clinical reading: formula, value, reference range and
         # verdict per parameter. Built from the same Measurements shown above,
