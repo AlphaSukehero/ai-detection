@@ -19,7 +19,6 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-from PIL import Image
 
 
 # Optional TensorFlow import with fallback
@@ -43,15 +42,15 @@ from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
     collect_metadata, finalize_metadata, metadata_rows, _clean_text,
 )
+from vision.imageio import check_mri_input, load_dicom_rgb, load_mri_rgb
 from vision.gradcam import (
     generate_gradcam_heatmap, create_gradcam_overlay,
-    create_tumor_region_highlight, calculate_tumor_area, calculate_tumor_size,
-    calculate_tumor_location, calculate_severity, calculate_spread,
+    create_tumor_region_highlight, calculate_tumor_location,
 )
 
 # Optional DICOM support
 try:
-    import pydicom
+    import pydicom  # noqa: F401  (availability probe; loading is in vision.imageio)
     DICOM_AVAILABLE = True
 except Exception as e:
     print("pydicom import warning:", e)
@@ -190,6 +189,7 @@ def get_brain_tumor_model():
             model, card = _load_validated(path, "mri", MRI_CARD_CLASSES, shape, prep)
             if model is not None:
                 print(f"Selected {path} (macro_f1={_card_macro_f1(path):.4f})")
+                card = dict(card, _name=os.path.splitext(os.path.basename(path))[0])
                 _brain_tumor_model = (model, card)
                 break
     return _brain_tumor_model
@@ -471,46 +471,16 @@ def load_dicom_as_pil(path):
     """Read a DICOM file and return a windowed RGB PIL image."""
     if not DICOM_AVAILABLE:
         raise ValueError("DICOM support requires the 'pydicom' package.")
-    ds = pydicom.dcmread(path)
-    arr = np.asarray(ds.pixel_array, dtype=np.float32)
-
-    # Apply modality rescaling (slope / intercept)
-    slope = float(getattr(ds, "RescaleSlope", 1.0) or 1.0)
-    intercept = float(getattr(ds, "RescaleIntercept", 0.0) or 0.0)
-    arr = arr * slope + intercept
-
-    # Window to a sensible display range (1st - 99th percentile)
-    lo = float(np.percentile(arr, 1))
-    hi = float(np.percentile(arr, 99))
-    if hi - lo < 1e-6:
-        hi = lo + 1.0
-    arr = np.clip((arr - lo) / (hi - lo), 0.0, 1.0)
-
-    if arr.ndim == 2:
-        rgb = np.stack([arr] * 3, axis=-1)
-    elif arr.ndim == 3 and arr.shape[-1] == 1:
-        rgb = np.repeat(arr, 3, axis=-1)
-    elif arr.ndim == 3 and arr.shape[-1] >= 3:
-        rgb = arr[:, :, :3]
-    else:
-        raise ValueError("Unsupported DICOM pixel array shape.")
-
-    rgb = (np.clip(rgb, 0.0, 1.0) * 255.0).astype(np.uint8)
-    return Image.fromarray(rgb, "RGB")
+    return load_dicom_rgb(path)
 
 
 def load_image_rgb(image_path):
-    """Load any supported image format (PIL formats + DICOM) as an RGB PIL Image."""
-    ext = os.path.splitext(str(image_path))[1].lower()
-    if ext in DICOM_EXTENSIONS:
-        return load_dicom_as_pil(image_path)
-    try:
-        img = Image.open(image_path)
-        img.load()
-        return img.convert("RGB")
-    except Exception as e:
-        raise ValueError(
-            f"Unsupported or corrupt image format '{ext or 'unknown'}': {e}") from e
+    """Load any supported image (8/16-bit, float, palette, DICOM) as RGB.
+
+    16-bit input is windowed by percentile; Image.convert("RGB") would clip
+    it to white (see vision/imageio.py).
+    """
+    return load_mri_rgb(image_path)
 
 
 # ============================================================
@@ -1090,6 +1060,60 @@ def analyze_ecg():
 # ANALYZE BRAIN TUMOR
 # ------------------------------------------------------------
 
+def mri_model_label(card):
+    """Human-readable identity of the MRI model that actually ran."""
+    if not card:
+        return NOT_PROVIDED
+    f1 = card.get("metrics", {}).get("macro_f1")
+    parts = [card.get("_name", "MRI classifier")]
+    if card.get("trained"):
+        parts.append(f"trained {card['trained']}")
+    if f1 is not None:
+        parts.append(f"macro-F1 {f1:.3f}")
+    return " · ".join(parts)
+
+
+def mri_attention_map(img, prediction, model, card):
+    """Grad-CAM overlay and the location of peak attention.
+
+    Only location is reported. Size and severity were derived from the share
+    of pixels above the map's own 90th percentile, which is ~10% for every
+    scan by construction, so they measured nothing and are gone. A failure
+    is returned for display rather than printed and swallowed.
+    """
+    out = {"heatmap_filename": None, "highlighted_filename": None,
+           "location": "Not applicable", "attention_error": None}
+    if prediction == "No Tumor" or model is None:
+        return out
+    try:
+        size = tuple(card["input_shape"][:2])
+        img_array = np.array(img.resize(size), dtype=np.float32)
+        input_tensor = preprocess_mri(img_array, card["preprocessing"])
+        predicted_class = list(MRI_CLASSES.values()).index(prediction)
+        heatmap = generate_gradcam_heatmap(model, input_tensor, predicted_class)
+        if heatmap is None or float(np.ptp(heatmap)) < 1e-6:
+            out["attention_error"] = "the model produced a flat attention map."
+            return out
+        overlay_name = "mri_heatmap_" + uuid.uuid4().hex[:8] + ".png"
+        create_gradcam_overlay(img, heatmap).save(
+            os.path.join(app.config["UPLOAD_FOLDER"], overlay_name))
+        region_name = "mri_highlight_" + uuid.uuid4().hex[:8] + ".png"
+        create_tumor_region_highlight(img, heatmap).save(
+            os.path.join(app.config["UPLOAD_FOLDER"], region_name))
+        out["heatmap_filename"] = overlay_name
+        out["highlighted_filename"] = region_name
+        if CV2_AVAILABLE:
+            mask = (heatmap >= np.percentile(heatmap, 90)).astype(np.uint8) * 255
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                           cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                out["location"] = calculate_tumor_location(
+                    max(contours, key=cv2.contourArea))
+    except Exception as e:
+        out["attention_error"] = str(e)
+    return out
+
+
 @app.route("/analyze_brain_tumor", methods=["POST"])
 def analyze_brain_tumor():
     file = request.files.get("mri_file")
@@ -1123,15 +1147,20 @@ def analyze_brain_tumor():
                                gender_options=GENDER_OPTIONS)
 
     try:
-        # Load image in any supported format (including DICOM)
+        # Load image in any supported format (including 16-bit and DICOM)
         img = load_image_rgb(filepath)
+        refusal = check_mri_input(img)
+        if refusal:
+            return render_template("brain_tumor.html", error=refusal,
+                                   patient=entered, patient_fields=PATIENT_FIELDS,
+                                   gender_options=GENDER_OPTIONS)
         try:
             res = predict_brain_tumor(filepath)
         except NoMRIModelError as e:
             # Nothing further on this page is meaningful without a
-            # classification -- the Grad-CAM, the tumour morphometry and the
-            # clinical wording are all downstream of it -- so this is a
-            # refusal, not a degraded render.
+            # classification -- the attention map and the clinical wording
+            # are downstream of it -- so this is a refusal, not a degraded
+            # render.
             return render_template("brain_tumor.html",
                                    error=str(e), patient=entered,
                                    patient_fields=PATIENT_FIELDS,
@@ -1141,62 +1170,8 @@ def analyze_brain_tumor():
         display_filename = "mri_analysis_" + uuid.uuid4().hex[:8] + ".png"
         img.save(os.path.join(app.config["UPLOAD_FOLDER"], display_filename))
 
-        # Generate Grad-CAM heatmap if tumor detected
-        heatmap_filename = None
-        highlighted_filename = None
-        area = 0.0
-        width = 0
-        height = 0
-        location = "Not applicable"
-        severity = "Not applicable"
-        spread = "Not applicable"
-
-        if res["prediction"] != "No Tumor":
-            try:
-                model, card = get_brain_tumor_model()
-                if model is not None:
-                    # Prepare image exactly as the card specifies
-                    size = tuple(card["input_shape"][:2])
-                    img_array = np.array(img.resize(size), dtype=np.float32)
-                    input_tensor = preprocess_mri(img_array, card["preprocessing"])
-                    
-                    # Get predicted class index
-                    predicted_class = list(MRI_CLASSES.values()).index(res["prediction"])
-                    
-                    # Generate Grad-CAM heatmap
-                    heatmap = generate_gradcam_heatmap(model, input_tensor, predicted_class)
-                    
-                    if heatmap is not None:
-                        # Create heatmap overlay image
-                        gradcam_image = create_gradcam_overlay(img, heatmap)
-                        heatmap_filename = "mri_heatmap_" + uuid.uuid4().hex[:8] + ".png"
-                        gradcam_image.save(os.path.join(app.config["UPLOAD_FOLDER"], heatmap_filename))
-                        
-                        # Create highlighted tumor region
-                        region_image = create_tumor_region_highlight(img, heatmap)
-                        highlighted_filename = "mri_highlight_" + uuid.uuid4().hex[:8] + ".png"
-                        region_image.save(os.path.join(app.config["UPLOAD_FOLDER"], highlighted_filename))
-                        
-                        # Calculate analysis metrics
-                        threshold = np.percentile(heatmap, 90)
-                        tumor_mask = (heatmap >= threshold).astype(np.uint8) * 255
-                        
-                        if CV2_AVAILABLE:
-                            kernel = np.ones((5, 5), np.uint8)
-                            tumor_mask = cv2.morphologyEx(tumor_mask, cv2.MORPH_OPEN, kernel)
-                            tumor_mask = cv2.morphologyEx(tumor_mask, cv2.MORPH_CLOSE, kernel)
-                            
-                            contours, _ = cv2.findContours(tumor_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                            if contours:
-                                largest_contour = max(contours, key=cv2.contourArea)
-                                area = calculate_tumor_area(tumor_mask)
-                                width, height = calculate_tumor_size(largest_contour)
-                                location = calculate_tumor_location(largest_contour)
-                                severity = calculate_severity(area)
-                                spread = calculate_spread(area)
-                        
-            except Exception as e:
-                print(f"Grad-CAM generation failed: {e}")
+        model, card = get_brain_tumor_model()
+        attention = mri_attention_map(img, res["prediction"], model, card)
 
         result = {
             "image_filename": display_filename,
@@ -1206,14 +1181,8 @@ def analyze_brain_tumor():
             "raw_probabilities": res["raw_probabilities"],
             "findings": res["findings"],
             "recommendation": res["recommendation"],
-            "heatmap_filename": heatmap_filename,
-            "highlighted_filename": highlighted_filename,
-            "area": f"{area:.2f}",
-            "width": width,
-            "height": height,
-            "location": location,
-            "severity": severity,
-            "spread": spread
+            "model_name": mri_model_label(card),
+            **attention,
         }
 
         result["verdict"] = mri_verdict(result["prediction"])
@@ -1471,25 +1440,17 @@ def download_brain_tumor_report():
             ("Diagnostic Attribute", "AI System Evaluation"),
             ("Primary Tumor Classification", prediction),
             ("Model Confidence Score", f"{form.get('confidence', '—')}%"),
-            ("Model", "VGG16 transfer-learning classifier (4-class)"),
+            ("Model", form.get("model_name") or NOT_PROVIDED),
         ]),
     ]
 
     if prediction and prediction != "No Tumor":
-        area_val = form.get('area', '—')
-        width_val = form.get('width', '—')
-        height_val = form.get('height', '—')
-        location_val = form.get("location", NOT_PROVIDED)
-        severity_val = form.get("severity", NOT_PROVIDED)
-        spread_val = form.get("spread", NOT_PROVIDED)
-        sections.append(("table", "2. Lesion Analysis Metrics (Grad-CAM derived)", [
-            ("Metric", "Estimated Value"),
-            ("Area of Activation", f"{area_val}% of image"),
-            ("Bounding Width", f"{width_val} px"),
-            ("Bounding Height", f"{height_val} px"),
-            ("Approximate Location", location_val),
-            ("Severity Indicator", severity_val),
-            ("Spread Indicator", spread_val),
+        sections.append(("table", "2. Model Attention (Grad-CAM)", [
+            ("Attribute", "Value"),
+            ("Peak Attention Location", form.get("location", NOT_PROVIDED)),
+            ("Lesion Size / Severity",
+             "Not measured — a classifier cannot measure lesion size; "
+             "segmentation or radiologist measurement is required."),
         ]))
 
     sections.append(("text", "3. Radiological Findings Summary",
@@ -1506,8 +1467,8 @@ def download_brain_tumor_report():
         sections=sections,
         disclaimer=(
             "Disclaimer: This report is generated by a research prototype and is not a "
-            "medical device. Lesion metrics are derived from model activation maps, not "
-            "from calibrated radiological measurement, and must be validated by a "
+            "medical device. The attention location is derived from model activation "
+            "maps, not from radiological measurement, and must be validated by a "
             "board-certified radiologist."
         ),
         footer_text="Unified AI Diagnostic Platform — Brain Tumor MRI Analysis (research use only)"

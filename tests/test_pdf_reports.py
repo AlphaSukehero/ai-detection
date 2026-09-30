@@ -131,11 +131,18 @@ def test_ecg_report_omits_the_section_when_the_payload_is_malformed(client):
 
 
 def _pdf_text(pdf):
+    """Concatenated content streams. Image streams that are not text are
+    skipped, so reports that embed pictures can be inspected too."""
     import base64
     import re
     import zlib
-    return b"".join(zlib.decompress(base64.a85decode(m.strip(), adobe=True))
-                    for m in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S))
+    out = []
+    for m in re.findall(rb"stream\r?\n(.*?)endstream", pdf, re.S):
+        try:
+            out.append(zlib.decompress(base64.a85decode(m.strip(), adobe=True)))
+        except Exception:
+            continue
+    return b"".join(out)
 
 
 DOCTOR_SECTIONS = (b"Clinical Impression", b"Recommendations", b"Precautions",

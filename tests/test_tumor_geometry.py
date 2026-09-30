@@ -6,7 +6,7 @@ so they are read as measurements. Nothing tested them before.
 import numpy as np
 import pytest
 
-from app import (calculate_tumor_area, calculate_tumor_size,
+from vision.gradcam import (calculate_tumor_area, calculate_tumor_size,
                  calculate_tumor_location, calculate_severity,
                  calculate_spread)
 

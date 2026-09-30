@@ -62,22 +62,16 @@ def _impression(prediction, v):
                 "report offers no reassurance.")
 
     location = _given(v, "location")
-    area = _given(v, "area")
-    severity = _given(v, "severity")
     detail = []
-    if location:
+    if location and location != "Not applicable":
         where = location if location.lower().endswith(("region", "area")) \
             else f"{location} region"
         detail.append(f"the highest model activation lies in the {where}")
-    if area:
-        detail.append(f"covering approximately {area}% of the image")
-    if severity:
-        detail.append(f"with a {severity.lower()} estimated severity")
     detail_text = (", " + ", ".join(detail)) if detail else ""
     return (f"ABNORMAL study. The MRI shows "
             f"{TUMOUR_DESCRIPTIONS[prediction]}{conf_text}{detail_text}. "
-            "Localisation and size are derived from activation maps, not "
-            "calibrated measurement. Histological confirmation and "
+            "Localisation is derived from activation maps, not "
+            "calibrated measurement; lesion size is not measured. Histological confirmation and "
             "specialist review are required before any diagnosis.")
 
 
