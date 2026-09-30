@@ -47,6 +47,12 @@ def pdf_value(raw):
     return raw
 
 
+def _percent(raw):
+    """'12.5%' for a value; 'Not measurable' for a blank, never a bare '%'."""
+    value = pdf_value(raw)
+    return value if value == "Not measurable" else f"{value}%"
+
+
 def clinical_from_form(form):
     """Rebuild the structured reading from the measurements posted back.
 
@@ -88,8 +94,8 @@ def ecg_classification_rows(form):
         ("Overall Rhythm Classification", prediction),
         ("Abnormality Class", form.get("abnormal_type", NOT_PROVIDED)),
         ("Classifier", form.get("classifier", NOT_PROVIDED)),
-        ("Classifier Confidence", f"{form.get('confidence', '—')}%"),
-        ("Supraventricular (S) Beat Probability", f"{form.get('atrial_probability', '—')}%"),
+        ("Classifier Confidence", _percent(form.get("confidence"))),
+        ("Supraventricular (S) Beat Probability", _percent(form.get("atrial_probability"))),
         ("Signal Quality", form.get("signal_quality", NOT_PROVIDED)),
         ("Input Source", form.get("input_source", NOT_PROVIDED)),
     ]
@@ -183,7 +189,7 @@ def mri_report_spec(form):
         ("table", "1. Classification Result", [
             ("Diagnostic Attribute", "AI System Evaluation"),
             ("Primary Tumor Classification", prediction),
-            ("Model Confidence Score", f"{form.get('confidence', '—')}%"),
+            ("Model Confidence Score", _percent(form.get("confidence"))),
             ("Model", form.get("model_name") or NOT_PROVIDED),
         ]),
     ]

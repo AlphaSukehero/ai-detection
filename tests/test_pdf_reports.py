@@ -179,3 +179,11 @@ def test_mri_report_reads_like_a_clinical_report(client, prediction, verdict):
     text = _pdf_text(_is_pdf(client.post("/download_brain_tumor_report", data=data)))
     for s in DOCTOR_SECTIONS + (b"MRI Classification", verdict):
         assert s in text, s
+
+
+def test_a_blank_percentage_reads_not_measurable_not_a_bare_percent(client):
+    data = dict(PATIENT, prediction="NORMAL", abnormal_type="x", confidence="91.0",
+                atrial_probability="", classifier="c")
+    text = _pdf_text(_is_pdf(client.post("/download_ecg_report", data=data)))
+    assert b"(91.0%)" in text
+    assert b"(%)" not in text

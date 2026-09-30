@@ -60,5 +60,26 @@
     {% endif %}
 </div>
 
-{% block history_tools %}{% endblock %}
+{% if by_modality %}
+<div class="panel">
+    <div class="panel-title"><span>📈</span> Trends</div>
+    <div class="panel-subtitle">Each measurement across visits; the shaded band is the adult reference range. Unmeasured values are gaps, not zeros.</div>
+    {% for mod in by_modality %}
+    <h3 class="records-h3">{{ modality_labels[mod] }} · {{ by_modality[mod]|length }} stud{{ 'y' if by_modality[mod]|length == 1 else 'ies' }}</h3>
+    <img class="trend-img" src="/patients/{{ patient.id }}/trends/{{ mod }}.png" alt="{{ modality_labels[mod] }} trends for {{ patient.name }}" loading="lazy">
+    {% endfor %}
+</div>
+
+<div class="panel">
+    <div class="panel-title"><span>🔁</span> Compare Studies</div>
+    {% if latest_pairs %}
+    <div class="records-actions" style="margin-bottom: 14px;">
+        {% for mod, pair in latest_pairs.items() %}
+        <a class="btn-sample" href="/patients/{{ patient.id }}/compare?a={{ pair[0] }}&b={{ pair[1] }}">{{ modality_labels[mod] }}: latest vs previous</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+    <a href="/patients/{{ patient.id }}/compare" style="color:#a5b4fc">Choose any two studies →</a>
+</div>
+{% endif %}
 {% endblock %}

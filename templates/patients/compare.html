@@ -1,0 +1,53 @@
+{% extends "patients/base.html" %}
+{% block title %}Compare · {{ patient.name }}{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="records-id"><a href="/patients/{{ patient.id }}" style="color:inherit">{{ patient.id }} · {{ patient.name }}</a></div>
+    <div class="panel-title" style="margin-top: 6px;"><span>🔁</span> Compare Studies</div>
+
+    {% if error %}<div class="records-error"><strong>⚠ </strong>{{ error }}</div>{% endif %}
+
+    <form method="GET" action="/patients/{{ patient.id }}/compare" class="records-toolbar">
+        {% for field, label in [("a", "Earlier study"), ("b", "Later study")] %}
+        {% set chosen = (pair[0].id if field == "a" else pair[1].id) if pair else request.args.get(field) %}
+        <label class="field" style="flex: 1 1 240px;">
+            <span style="font-size: 12px; color: var(--text-muted);">{{ label }}</span>
+            <select name="{{ field }}" required>
+                <option value="">Select…</option>
+                {% for s in studies %}
+                <option value="{{ s.id }}" {% if chosen == s.id %}selected{% endif %}>{{ s.study_date }} · {{ modality_labels[s.modality] }} · {{ s.id }}</option>
+                {% endfor %}
+            </select>
+        </label>
+        {% endfor %}
+        <button type="submit" class="btn-sample">Compare</button>
+    </form>
+    {% if not pair and not error %}<p class="records-empty">Pick two studies of the same type.</p>{% endif %}
+</div>
+
+{% if pair %}
+{% set a, b = pair %}
+<div class="panel">
+    <div class="records-facts" style="margin-bottom: 14px;">
+        <span>Before: <a href="/patients/{{ patient.id }}/studies/{{ a.id }}" style="color:#a5b4fc">{{ a.id }}</a> · <strong>{{ a.study_date }}</strong></span>
+        <span>Now: <a href="/patients/{{ patient.id }}/studies/{{ b.id }}" style="color:#a5b4fc">{{ b.id }}</a> · <strong>{{ b.study_date }}</strong></span>
+        <span>{{ modality_labels[b.modality] }}</span>
+    </div>
+    {% if images %}
+    <div class="compare-images">
+        {% for kind, caption in images %}
+            {% for s in (a, b) %}
+            <figure>
+                {% if kind in s.files %}
+                <img src="/patients/{{ patient.id }}/studies/{{ s.id }}/files/{{ kind }}" alt="{{ caption }} {{ s.study_date }}" loading="lazy">
+                {% else %}<div class="records-empty">No {{ caption|lower }}</div>{% endif %}
+                <figcaption>{{ caption }} · {{ s.study_date }}</figcaption>
+            </figure>
+            {% endfor %}
+        {% endfor %}
+    </div>
+    {% endif %}
+    {% include "_compare_table.html" %}
+</div>
+{% endif %}
+{% endblock %}

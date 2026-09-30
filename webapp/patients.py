@@ -5,11 +5,14 @@ The record store lives at app.config["RECORDS_ROOT"].
 """
 import os
 
-from flask import (Blueprint, abort, current_app, g, redirect, render_template,
-                   request, send_file, url_for)
+import io
+
+from flask import (Blueprint, Response, abort, current_app, g, redirect,
+                   render_template, request, send_file, url_for)
 
 from records import db, patients, studies, store
 from records.catalog import MODALITY_LABELS, entries, range_status
+from records.compare import compare as compare_studies
 
 bp = Blueprint("patients", __name__)
 
@@ -85,8 +88,11 @@ def detail(pid):
     by_modality = {}
     for s in history:
         by_modality.setdefault(s["modality"], []).append(s)
+    # Default comparison per modality: the two most recent studies.
+    latest_pairs = {m: (ss[1]["id"], ss[0]["id"]) for m, ss in by_modality.items()
+                    if len(ss) >= 2}
     return render_template("patients/detail.html", patient=p, studies=history,
-                           by_modality=by_modality)
+                           by_modality=by_modality, latest_pairs=latest_pairs)
 
 
 @bp.route("/patients/<pid>/studies/<sid>/files/<kind>")
@@ -146,6 +152,60 @@ def study_pdf(pid, sid):
                                      study_images(records_root(), s))
     return send_file(buffer, mimetype="application/pdf", as_attachment=True,
                      download_name=f"{sid}.pdf")
+
+
+@bp.route("/patients/<pid>/compare")
+def compare(pid):
+    p = patient_or_404(pid)
+    a_id, b_id = request.args.get("a"), request.args.get("b")
+    history = studies.list_studies(get_conn(), pid)
+    if not (a_id and b_id):
+        return render_template("patients/compare.html", patient=p, pair=None,
+                               studies=history, rows=None, error=None)
+    a, b = study_or_404(pid, a_id), study_or_404(pid, b_id)
+    if (a["study_date"], a["created_at"]) > (b["study_date"], b["created_at"]):
+        a, b = b, a
+    try:
+        rows = compare_studies(a, b)
+    except ValueError as e:
+        return render_template("patients/compare.html", patient=p, pair=None,
+                               studies=history, rows=None, error=str(e)), 400
+    images = [(kind, caption) for kind, caption in IMAGE_KINDS
+              if kind in a["files"] or kind in b["files"]]
+    return render_template("patients/compare.html", patient=p, pair=(a, b),
+                           studies=history, rows=rows, images=images, error=None)
+
+
+@bp.route("/patients/<pid>/trends/<modality>.png")
+def trend(pid, modality):
+    patient_or_404(pid)
+    if modality not in MODALITY_LABELS:
+        abort(404)
+    from reporting.trends import trend_png
+    png = trend_png(modality, studies.measurement_series(get_conn(), pid, modality))
+    if png is None:
+        abort(404, description="No measurements to chart for this modality.")
+    return Response(png, mimetype="image/png")
+
+
+@bp.route("/patients/<pid>/history.pdf")
+def history_pdf(pid):
+    p = patient_or_404(pid)
+    conn = get_conn()
+    full = [studies.get_study(conn, s["id"]) for s in studies.list_studies(conn, pid)]
+    from reporting.history import build_history_pdf
+    from reporting.trends import trend_png
+    from webapp.study_binding import study_images
+    trends = {}
+    for modality in MODALITY_LABELS:
+        png = trend_png(modality, studies.measurement_series(conn, pid, modality), dpi=150)
+        if png:
+            trends[modality] = png
+    buffer = build_history_pdf(p, full, trends,
+                               lambda s: study_images(records_root(), s))
+    return send_file(io.BytesIO(buffer.getvalue()), mimetype="application/pdf",
+                     as_attachment=True,
+                     download_name=f"Patient_History_{p['id']}.pdf")
 
 
 @bp.app_errorhandler(404)
