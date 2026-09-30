@@ -1,0 +1,68 @@
+{% extends "patients/base.html" %}
+{% block title %}{{ study.id }} · {{ patient.name }}{% endblock %}
+{% block content %}
+<div class="panel">
+    <div class="records-header">
+        <div>
+            <div class="records-id"><a href="/patients/{{ patient.id }}" style="color:inherit">{{ patient.id }} · {{ patient.name }}</a></div>
+            <h2 class="records-name">{{ modality_labels[study.modality] }} study · {{ study.study_date }}</h2>
+            <div class="records-facts">
+                <span>Study: <strong>{{ study.id }}</strong></span>
+                <span>Verdict: <span class="verdict-badge verdict-{{ (study.verdict or 'NOT ASSESSED')|lower|replace(' ', '-') }}">{{ study.verdict or "NOT ASSESSED" }}</span></span>
+                <span>Referred by: <strong>{{ study.referring_physician or "—" }}</strong></span>
+                <span>Model: <strong>{{ study.model_name or "—" }}{% if study.model_version %} ({{ study.model_version }}){% endif %}</strong></span>
+                <span>Saved: <strong>{{ study.created_at[:16]|replace('T', ' ') }}</strong></span>
+            </div>
+        </div>
+        <div class="records-actions">
+            <a href="/patients/{{ patient.id }}/studies/{{ study.id }}/pdf" class="btn-primary records-cta">📥 Study PDF</a>
+            {% if study.files.original %}<a href="/patients/{{ patient.id }}/studies/{{ study.id }}/files/original?download=1" class="btn-sample">Original upload</a>{% endif %}
+        </div>
+    </div>
+    <div class="records-notes" style="border-color: var(--border-color); background: transparent;">
+        <strong>Finding:</strong> {{ study.headline or "—" }}
+        {% if study.clinical_history %}<br><strong>Clinical history:</strong> {{ study.clinical_history }}{% endif %}
+    </div>
+    {% if previous %}
+    <p style="margin-top: 14px; font-size: 14px;">
+        Previous {{ modality_labels[study.modality] }}: <a href="/patients/{{ patient.id }}/studies/{{ previous.id }}" style="color:#a5b4fc">{{ previous.id }}</a> ({{ previous.study_date }}) ·
+        <a href="/patients/{{ patient.id }}/compare?a={{ previous.id }}&b={{ study.id }}" style="color:#a5b4fc">compare side by side →</a>
+    </p>
+    {% endif %}
+</div>
+
+{% if rows %}
+<div class="panel">
+    <div class="panel-title"><span>📊</span> Measurements</div>
+    <div class="table-scroll" style="max-height: none;">
+        <table class="data-table">
+            <thead><tr><th>Measure</th><th>Value</th><th>Reference</th><th>Status</th></tr></thead>
+            <tbody>
+            {% for r in rows %}
+            <tr>
+                <td>{{ r.label }}</td>
+                <td>{{ r.value if r.value is not none else "not measured" }} {% if r.value is not none %}{{ r.unit }}{% endif %}</td>
+                <td>{% if r.range %}{{ r.range[0] if r.range[0] is not none else "" }}–{{ r.range[1] if r.range[1] is not none else "" }} {{ r.unit }}{% else %}—{% endif %}</td>
+                <td>{{ r.status or "—" }}</td>
+            </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+{% if images %}
+<div class="panel">
+    <div class="panel-title"><span>🖼️</span> Images</div>
+    <div class="compare-images">
+        {% for kind, caption in images %}
+        <figure>
+            <img src="/patients/{{ patient.id }}/studies/{{ study.id }}/files/{{ kind }}" alt="{{ caption }}" loading="lazy">
+            <figcaption>{{ caption }}</figcaption>
+        </figure>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -6,6 +6,7 @@ from flask import (
     send_file,
     abort
 )
+import json
 import os
 import re
 import time
@@ -46,6 +47,10 @@ from reporting.study_reports import (  # noqa: F401
 from eeg.interpretation import clinical_notes as eeg_clinical_notes
 from vision.interpretation import clinical_notes as mri_clinical_notes, mri_verdict
 from webapp.patients import bp as patients_bp
+from webapp.study_binding import (
+    bound_context, dumps, ecg_measurements, eeg_measurements, mri_measurements,
+    patient_form, report_fields, resolve, save_study_for,
+)
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
     collect_metadata, finalize_metadata, metadata_rows,
@@ -90,6 +95,7 @@ app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 # Patient record store (SQLite + study files). Never swept; see records/.
 app.config["RECORDS_ROOT"] = os.environ.get("RECORDS_ROOT", "records_data")
 app.register_blueprint(patients_bp)
+app.context_processor(bound_context)
 app.config["MAX_CONTENT_LENGTH"] = 32 * 1024 * 1024  # 32 MB upload limit
 
 
@@ -883,6 +889,23 @@ def _signal_quality(report):
     return "Insufficient data"
 
 
+# The fields each result page carries to its PDF; a saved study stores the
+# same dict as its report, so both PDFs come from one builder.
+ECG_REPORT_KEYS = (
+    "prediction", "abnormal_type", "confidence", "atrial_probability",
+    "classifier", "classifier_error", "heart_rate", "rr_interval",
+    "qrs_duration", "pr_interval", "qt_interval", "qtc", "sdnn", "rmssd",
+    "rhythm", "st_segment", "axis", "interpretation", "recommendation",
+    "signal_quality", "input_source")
+MRI_REPORT_KEYS = ("prediction", "confidence", "findings", "recommendation",
+                   "location", "model_name")
+
+
+def dumps_safe(obj):
+    """A JSON-safe deep copy (numpy scalars and arrays become plain values)."""
+    return json.loads(dumps(obj))
+
+
 ECG_PAPER_SPEEDS = (25.0, 50.0)
 NO_ECG_TIMEBASE = (
     "No timebase: this image has no detectable ECG grid and no recording "
@@ -921,7 +944,10 @@ def analyze_ecg():
     file = request.files.get("ecg_file")
     sample_type = request.form.get("sample_type")
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return render_template("ecg.html", error=" ".join(meta_errors),
                                patient=entered, patient_fields=PATIENT_FIELDS,
@@ -1055,7 +1081,24 @@ def analyze_ecg():
         result["notes"] = ecg_doctor_notes(clinical, result["prediction"],
                                            interpretation, recommendation)
 
-        return render_template("ecg.html", result=result, patient=patient,
+        saved = None
+        bound, _ = resolve(request.form)
+        if bound:
+            fields = {k: result.get(k) for k in ECG_REPORT_KEYS}
+            fields["clinical_json"] = dumps(result["clinical"])
+            _card = get_ecg_model()[1] or {}
+            saved = save_study_for(
+                "ecg", bound, form, result=dumps_safe(result),
+                report=report_fields(patient, fields),
+                verdict=result["notes"]["verdict"]["label"],
+                headline=result["notes"]["verdict"]["detail"],
+                model_name=classifier or "none",
+                model_version=_card.get("trained"),
+                measurements=ecg_measurements(report, beat_result),
+                files={"original": filepath,
+                       "waveform": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+
+        return render_template("ecg.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
                                patient_rows=metadata_rows(patient, PATIENT_FIELDS),
                                gender_options=GENDER_OPTIONS)
@@ -1130,7 +1173,10 @@ def analyze_brain_tumor():
     file = request.files.get("mri_file")
     sample_name = request.form.get("sample_name")
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return render_template("brain_tumor.html", error=" ".join(meta_errors),
                                patient=entered, patient_fields=PATIENT_FIELDS,
@@ -1198,7 +1244,25 @@ def analyze_brain_tumor():
 
         result["verdict"] = mri_verdict(result["prediction"])
         result["notes"] = mri_clinical_notes(result["prediction"], result)
-        return render_template("brain_tumor.html", result=result, patient=patient,
+
+        saved = None
+        bound, _ = resolve(request.form)
+        if bound:
+            up = app.config["UPLOAD_FOLDER"]
+            saved = save_study_for(
+                "mri", bound, form, result=dumps_safe(result),
+                report=report_fields(patient, {k: result.get(k) for k in MRI_REPORT_KEYS}),
+                verdict=result["verdict"]["label"],
+                headline=f"{result['prediction']} ({result['confidence']}%)",
+                model_name=(card or {}).get("_name"),
+                model_version=(card or {}).get("trained"),
+                measurements=mri_measurements(result),
+                files={"original": filepath,
+                       "scan": os.path.join(up, display_filename),
+                       "heatmap": result["heatmap_filename"] and os.path.join(up, result["heatmap_filename"]),
+                       "highlight": result["highlighted_filename"] and os.path.join(up, result["highlighted_filename"])})
+
+        return render_template("brain_tumor.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
                                patient_rows=metadata_rows(patient, PATIENT_FIELDS),
                                gender_options=GENDER_OPTIONS)
@@ -1418,7 +1482,10 @@ def analyze_eeg():
     from eeg.inference import analyse_signal, summarise
     from eeg.metrics import BANDS
 
-    entered, meta_errors = collect_metadata(request.form, PATIENT_FIELDS)
+    form, bind_error = patient_form(request.form)
+    entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
+    if bind_error:
+        meta_errors = [bind_error] + meta_errors
     if meta_errors:
         return _eeg_page(error=" ".join(meta_errors), patient=entered)
     patient = finalize_metadata(entered, PATIENT_FIELDS)
@@ -1506,7 +1573,19 @@ def analyze_eeg():
     }
     view["notes"] = eeg_clinical_notes(task, view["verdict"]["label"],
                                        view["report"])
-    return _eeg_page(result=view, patient=patient,
+    saved = None
+    bound, _ = resolve(request.form)
+    if bound:
+        saved = save_study_for(
+            "eeg", bound, form, result=dumps_safe(view),
+            report=report_fields(patient, {"eeg_json": dumps(view["report"])}),
+            verdict=view["verdict"]["label"], headline=summary["headline"],
+            model_name=f"eeg_{task}" if view["model_used"] else "none",
+            model_version=(card or {}).get("trained"),
+            measurements=eeg_measurements(view["report"]),
+            files={"original": filepath,
+                   "timeline": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+    return _eeg_page(result=view, patient=patient, saved=saved,
                      patient_rows=metadata_rows(patient, PATIENT_FIELDS))
 
 

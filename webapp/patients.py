@@ -9,7 +9,7 @@ from flask import (Blueprint, abort, current_app, g, redirect, render_template,
                    request, send_file, url_for)
 
 from records import db, patients, studies, store
-from records.catalog import MODALITY_LABELS
+from records.catalog import MODALITY_LABELS, entries, range_status
 
 bp = Blueprint("patients", __name__)
 
@@ -99,6 +99,53 @@ def study_file(pid, sid, kind):
     if not os.path.isfile(path):
         abort(404, description="This stored file is missing from the record store.")
     return send_file(path, as_attachment=request.args.get("download") == "1")
+
+
+IMAGE_KINDS = [("scan", "MRI scan"), ("heatmap", "Grad-CAM attention map"),
+               ("highlight", "Highest-attention region"),
+               ("waveform", "ECG waveform"), ("timeline", "EEG timeline")]
+
+
+def measurement_rows(study):
+    """Catalog-ordered rows for a study's measurements, with range status."""
+    rows = []
+    for key, label, unit, rng in entries(study["modality"]):
+        m = study["measurements"].get(key)
+        if m is None:
+            continue
+        value = m["value"]
+        rows.append({"label": label, "unit": unit,
+                     "value": None if value is None else round(value, 2),
+                     "range": rng, "status": range_status(value, rng)})
+    return rows
+
+
+@bp.route("/patients/<pid>/studies/<sid>")
+def study(pid, sid):
+    p = patient_or_404(pid)
+    s = study_or_404(pid, sid)
+    previous = studies.previous_study(get_conn(), s)
+    images = [(kind, caption) for kind, caption in IMAGE_KINDS if kind in s["files"]]
+    return render_template("patients/study.html", patient=p, study=s,
+                           previous=previous, rows=measurement_rows(s),
+                           images=images)
+
+
+@bp.route("/patients/<pid>/studies/<sid>/pdf")
+def study_pdf(pid, sid):
+    s = study_or_404(pid, sid)
+    rel = s["files"].get("pdf")
+    path = store.absolute(records_root(), rel) if rel else None
+    if path and os.path.isfile(path):
+        return send_file(path, mimetype="application/pdf", as_attachment=True,
+                         download_name=f"{sid}_{MODALITY_LABELS[s['modality']].replace(' ', '_')}.pdf")
+    # Stored PDF missing: rebuild it from the stored report rather than fail.
+    from reporting.study_reports import render_study_pdf
+    from webapp.study_binding import study_images
+    buffer, _name = render_study_pdf(s["modality"], s["report"],
+                                     study_images(records_root(), s))
+    return send_file(buffer, mimetype="application/pdf", as_attachment=True,
+                     download_name=f"{sid}.pdf")
 
 
 @bp.app_errorhandler(404)
