@@ -88,6 +88,65 @@ def read_recording(path, picks=None, l_freq=0.5, h_freq=45.0):
     return raw.get_data() * 1e6, fs, list(raw.ch_names)
 
 
+def read_csv_recording(path, fs, l_freq=0.5, h_freq=45.0):
+    """Load a CSV EEG export. Returns (signal_uV, fs, channel_names).
+
+    One column per channel, optional header row. Values are taken to be
+    microvolts, the unit EEG is read in. A first column that increases
+    monotonically is a time axis and is dropped. A CSV carries no sampling
+    rate, so the caller must state it: without one there is no timebase and
+    every frequency in this pipeline would be a guess.
+    """
+    import numpy as np
+    from scipy.signal import butter, sosfiltfilt
+
+    if not fs or fs <= 0:
+        raise RecordingError(
+            "A CSV file does not record its sampling rate. Enter the sampling "
+            "rate (Hz) the recording was made at.")
+    try:
+        with open(path, encoding="utf-8-sig") as fh:
+            lines = [ln.strip() for ln in fh if ln.strip()]
+    except OSError as e:
+        raise RecordingError(f"could not read {os.path.basename(path)}: {e}") from e
+    if not lines:
+        raise RecordingError("The CSV file is empty.")
+
+    delim = ";" if lines[0].count(";") > lines[0].count(",") else ","
+    first = [c.strip() for c in lines[0].split(delim)]
+
+    def numeric(cells):
+        try:
+            return [float(c) for c in cells]
+        except ValueError:
+            return None
+
+    header = None if numeric(first) is not None else first
+    rows = lines[1:] if header else lines
+    data = []
+    for n, line in enumerate(rows, start=2 if header else 1):
+        values = numeric([c.strip() for c in line.split(delim)])
+        if values is None:
+            raise RecordingError(f"non-numeric value on line {n} of the CSV.")
+        data.append(values)
+    widths = {len(r) for r in data}
+    if len(widths) != 1:
+        raise RecordingError("CSV rows have different numbers of columns.")
+    arr = np.asarray(data, dtype=np.float64).T          # (channels, samples)
+    names = header or [f"ch{i + 1}" for i in range(arr.shape[0])]
+
+    if arr.shape[0] > 1 and arr.shape[1] > 2 and np.all(np.diff(arr[0]) > 0):
+        arr, names = arr[1:], names[1:]
+    if arr.shape[1] < int(fs):
+        raise RecordingError("The CSV holds less than one second of signal.")
+
+    top = min(h_freq, fs / 2.0 - 1.0)
+    if top > l_freq:
+        sos = butter(4, [l_freq, top], btype="bandpass", fs=fs, output="sos")
+        arr = sosfiltfilt(sos, arr, axis=1)
+    return arr, float(fs), list(names)
+
+
 # --------------------------------------------------------------- CHB-MIT
 
 _SEIZURE_START = re.compile(r"Seizure.*Start Time:\s*(\d+)\s*seconds")
