@@ -1,5 +1,7 @@
 from flask import (
     Flask,
+    jsonify,
+    url_for,
     render_template,
     request,
     send_from_directory,
@@ -1643,6 +1645,60 @@ def analyze_eeg():
         return _eeg_page(error=out["error"], patient=out["entered"])
     return _eeg_page(result=out["view"], patient=out["patient"], saved=out["saved"],
                      patient_rows=metadata_rows(out["patient"], PATIENT_FIELDS))
+
+
+@app.route("/api/eeg/analyze", methods=["POST"])
+def api_analyze_eeg():
+    """JSON form of /analyze_eeg: verdict, peak, episodes and every window.
+
+    Same fields, same analysis function, so the page and the API cannot
+    disagree. `report_form` is exactly what /download_eeg_report expects.
+    """
+    from eeg.metrics import BANDS
+
+    out = run_eeg_analysis(request.form, request.files.get("eeg_file"))
+    if "error" in out:
+        return jsonify({"ok": False, "error": out["error"]}), 400
+    view, patient, saved = out["view"], out["patient"], out["saved"]
+    windows = [{
+        "index": w["index"], "start_s": round(w["start_s"], 2),
+        "stop_s": round(w["stop_s"], 2),
+        "score": None if w.get("score") is None else round(w["score"], 4),
+        "smoothed_score": (None if w.get("smoothed_score") is None
+                           else round(w["smoothed_score"], 4)),
+        "flagged": bool(w.get("flagged")),
+        "artifact": w["artifact"],
+        "rsp": ({b: round(w["rsp"][b], 4) for b in BANDS} if w["rsp"] else None),
+        "spectral_entropy": (None if w["spectral_entropy"] is None
+                             else round(w["spectral_entropy"], 4)),
+        "spikes": round(w["spikes"]["rate_per_s"], 3),
+    } for w in out["result"]["windows"]]
+    saved_out = None
+    if saved:
+        if saved.get("error"):
+            saved_out = {"error": saved["error"]}
+        else:
+            st = saved["study"]
+            base = f"/patients/{st['patient_id']}/studies/{st['id']}"
+            saved_out = {"study_id": st["id"], "url": base, "pdf_url": base + "/pdf",
+                         "patient_url": f"/patients/{st['patient_id']}",
+                         "previous": (saved["previous"] or {}).get("id"),
+                         "since_last_visit": saved["rows"]}
+    return jsonify(dumps_safe({
+        "ok": True,
+        "task": view["task_label"], "representation": view["representation"],
+        "representation_label": view["representation_label"],
+        "provenance": view["provenance"], "duration_s": view["duration_s"],
+        "model_used": view["model_used"], "not_assessed": view["not_assessed"],
+        "verdict": view["verdict"], "summary": view["summary"],
+        "peak": view["peak"], "episodes": view["report"]["episodes"],
+        "n_windows": view["n_windows"], "artifact_windows": view["artifact_windows"],
+        "windows": windows, "notes": view["notes"],
+        "timeline_url": url_for("uploaded_file", filename=view["timeline"]),
+        "patient": [[label, patient.get(key)] for key, label in PATIENT_FIELDS],
+        "report_form": report_fields(patient, {"eeg_json": dumps(view["report"])}),
+        "saved": saved_out,
+    }))
 
 
 @app.route("/download_ecg_report", methods=["POST"])

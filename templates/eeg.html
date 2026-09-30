@@ -32,7 +32,7 @@
                 </div>
 
                 {% if error %}
-                <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
+                <div class="eeg-server-error" style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
                     <strong>⚠ Analysis Error:</strong> {{ error }}
                 </div>
                 {% endif %}
@@ -92,6 +92,8 @@
                     </div>
                 </form>
             </div>
+
+            <div id="eeg-live" aria-live="polite"></div>
 
             {% if result %}
             <div class="result-card">
@@ -207,5 +209,6 @@
             <p>&copy; 2026 Unified AI Analysis Engine. Research prototype — EEG windowed analysis.</p>
         </footer>
     </div>
+    <script src="/static/eeg.js" defer></script>
 </body>
 </html>
