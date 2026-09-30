@@ -32,7 +32,7 @@
                 </div>
 
                 {% if error %}
-                <div style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
+                <div class="eeg-server-error" style="background: rgba(239, 68, 68, 0.15); border: 1px solid var(--danger); padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; color: var(--danger);">
                     <strong>⚠ Analysis Error:</strong> {{ error }}
                 </div>
                 {% endif %}
@@ -54,6 +54,21 @@
                                     </select>
                                 </div>
                                 <div class="field">
+                                    <label for="representation">Model representation</label>
+                                    <select id="representation" name="representation">
+                                        {% for key, label in representations.items() %}
+                                        <option value="{{ key }}" {% if request.form.get('representation', 'scalogram') == key %}selected{% endif %}>{{ label }}{% if key == 'scalogram' %} — validated{% endif %}</option>
+                                        {% endfor %}
+                                    </select>
+                                    <div class="field-hint">Each window (2 s, 50% overlap, across the whole recording) is rendered this way and scored. Only a representation with a validated model can produce a verdict.</div>
+                                </div>
+                                <div class="field">
+                                    <label for="sampling_rate">Sampling rate (Hz) — CSV only</label>
+                                    <input type="number" id="sampling_rate" name="sampling_rate" min="1" max="10000" step="any"
+                                           placeholder="e.g. 256" value="{{ request.form.get('sampling_rate', '') }}">
+                                    <div class="field-hint">A CSV has no timebase of its own. One column per channel, values in µV; a time column is ignored.</div>
+                                </div>
+                                <div class="field">
                                     <label for="duration">Recording duration (seconds) — images only</label>
                                     <input type="number" id="duration" name="duration" min="0" max="86400" step="1"
                                            placeholder="e.g. 30" value="{{ request.form.get('duration', '') }}">
@@ -64,9 +79,9 @@
                             <div class="upload-dropzone" style="display: flex; flex-direction: column; justify-content: center; align-items: center;" onclick="document.getElementById('eeg_file').click();">
                                 <div class="upload-icon" style="color: #10b981;">〰</div>
                                 <h3 style="margin-bottom: 6px; font-weight: 600; font-size: 15px;" id="upload-label">Click to browse for an EEG recording or trace image</h3>
-                                <p style="color: var(--text-muted); font-size: 12px;">EDF / BDF / SET / FIF preferred · PNG / JPG / TIFF / BMP accepted</p>
+                                <p style="color: var(--text-muted); font-size: 12px;">EDF / BDF / SET / FIF preferred · CSV (with sampling rate) · PNG / JPG / TIFF / BMP accepted</p>
                                 <input type="file" name="eeg_file" id="eeg_file" class="file-input"
-                                       accept=".edf,.bdf,.set,.fif,.png,.jpg,.jpeg,.tif,.tiff,.bmp"
+                                       accept=".edf,.bdf,.set,.fif,.csv,.png,.jpg,.jpeg,.tif,.tiff,.bmp"
                                        onchange="document.getElementById('upload-label').innerText = 'Selected: ' + this.files[0].name;">
                             </div>
 
@@ -78,6 +93,8 @@
                 </form>
             </div>
 
+            <div id="eeg-live" aria-live="polite"></div>
+
             {% if result %}
             <div class="result-card">
                 {% if patient %}
@@ -88,12 +105,12 @@
 
                 <h2 style="font-family: var(--font-heading); font-size: 22px; margin-bottom: 8px;">🧬 Analysis Result</h2>
                 <div style="color: var(--text-muted); font-size: 13px; margin-bottom: 20px;">
-                    {{ result.task_label }} · Source: {{ result.provenance }} · {{ result.duration_s }} s
+                    {{ result.task_label }} · {{ result.representation_label }} · Source: {{ result.provenance }} · {{ result.duration_s }} s
                 </div>
 
                 {% if not result.model_used %}
                 <div style="background: rgba(251,191,36,0.12); border: 1px solid #f59e0b; border-radius: 8px; padding: 14px 16px; margin-bottom: 20px; font-size: 14px;">
-                    ⚠️ <strong>No validated model is installed for this task</strong>, so no window was classified.
+                    ⚠️ <strong>{{ result.not_assessed }}</strong>
                     Every measurement below is computed from the signal itself and remains valid.
                     This is <strong>not</strong> a statement that the recording is normal.
                 </div>
@@ -106,9 +123,13 @@
                     <div class="metric-box"><div class="metric-label">Artifact Windows</div><div class="metric-value">{{ result.artifact_windows }}</div></div>
                 </div>
 
-                <div style="background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.35); border-radius: 8px; padding: 14px 16px; margin-bottom: 28px; font-size: 14px;">
+                <div style="background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.35); border-radius: 8px; padding: 14px 16px; margin-bottom: {{ '12px' if result.summary.peak_note else '28px' }}; font-size: 14px;">
                     {{ result.summary.headline }}
+                    {% if result.peak %}<br><span style="color: var(--text-muted);">Highest window score: <strong>{{ '%.2f' % result.peak.score }}</strong> at {{ '%.1f' % result.peak.start_s }}–{{ '%.1f' % result.peak.stop_s }} s</span>{% endif %}
                 </div>
+                {% if result.summary.peak_note %}
+                <div class="records-notes" style="margin-bottom: 28px;">🔎 {{ result.summary.peak_note }}</div>
+                {% endif %}
 
                 {% with verdict = result.verdict, notes = result.notes, title = "EEG Classification" %}
                     {% include "_doctor_notes.html" %}
@@ -188,5 +209,6 @@
             <p>&copy; 2026 Unified AI Analysis Engine. Research prototype — EEG windowed analysis.</p>
         </footer>
     </div>
+    <script src="/static/eeg.js" defer></script>
 </body>
 </html>

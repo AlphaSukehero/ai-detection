@@ -101,7 +101,7 @@ def ecg_classification_rows(form):
     ]
 
 
-def eeg_verdict(model_used, episodes):
+def eeg_verdict(model_used, episodes, reason=None):
     """Overall NORMAL / ABNORMAL call for an EEG study.
 
     Without a model nothing was classified, so the answer is NOT ASSESSED:
@@ -109,7 +109,7 @@ def eeg_verdict(model_used, episodes):
     """
     if not model_used:
         return {"label": "NOT ASSESSED", "tone": "warn",
-                "detail": "No validated model installed; no window was classified."}
+                "detail": reason or "No validated model installed; no window was classified."}
     if episodes:
         return {"label": "ABNORMAL", "tone": "bad",
                 "detail": f"{episodes} anomalous episode(s) detected."}
@@ -234,7 +234,7 @@ def eeg_report_spec(form):
         return fmt.format(r[key]) if r.get(key) is not None else NOT_PROVIDED
 
     assessed = bool(r.get("model_used"))
-    verdict = eeg_verdict(assessed, r.get("episodes_n") or 0)
+    verdict = eeg_verdict(assessed, r.get("episodes_n") or 0, r.get("not_assessed_reason"))
     task_key = r.get("task_key") if r.get("task_key") in EEG_TASKS else "seizure"
     notes = eeg_clinical_notes(task_key, verdict["label"], r)
     sections = [
@@ -244,6 +244,7 @@ def eeg_report_spec(form):
             ("Attribute", "Value"),
             ("Clinical Question", v("task")),
             ("Input Source", v("source")),
+            ("Representation", v("representation")),
             ("Duration", v("duration_s", "{} s")),
             ("Windows Analysed", v("n_windows")),
             ("Artifact Windows", v("artifact_windows")),
@@ -254,8 +255,12 @@ def eeg_report_spec(form):
             ("Detected Episodes", v("episodes_n") if assessed else "—"),
             ("Anomaly Burden", v("burden_pct", "{}%") if assessed else "—"),
             ("Mean Spike Rate", v("mean_spikes", "{} /s")),
+            ("Highest Window Score",
+             f"{r['peak_score']:.3f} at {r['peak_start_s']:.1f}–{r['peak_stop_s']:.1f} s"
+             if assessed and r.get("peak_score") is not None else "—"),
         ]),
-        ("text", "3. Automated Summary", r.get("headline") or NOT_PROVIDED),
+        ("text", "3. Automated Summary",
+         " ".join(x for x in (r.get("headline"), r.get("peak_note")) if x) or NOT_PROVIDED),
     ]
     if r.get("band_means"):
         sections.append(("table", "4. Mean Relative Spectral Power",

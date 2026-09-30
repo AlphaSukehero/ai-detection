@@ -116,6 +116,7 @@ def eeg_measurements(report):
         ("burden_pct", report.get("burden_pct") if report.get("model_used") else None, "%"),
         ("episodes", report.get("episodes_n") if report.get("model_used") else None, ""),
         ("mean_spike_rate", report.get("mean_spikes"), "/s"),
+        ("peak_score", report.get("peak_score") if report.get("model_used") else None, ""),
         ("duration_s", report.get("duration_s"), "s"),
     ]
     rows += [(f"rsp_{b}", bands.get(b), "") for b in

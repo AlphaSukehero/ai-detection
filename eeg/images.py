@@ -93,11 +93,41 @@ def spectrogram(x, fs, size=IMAGE_SIZE, freq_range=FREQ_RANGE):
     return _resize(_normalise(power), size).astype(np.float32)
 
 
+def lineplot(x, fs, size=IMAGE_SIZE):
+    """The window drawn as a trace: ink = 1 on a 0 background.
+
+    Rasterised from the samples directly (never from a screenshot). Amplitude
+    is min-max scaled per window, so the image is gain-invariant like the
+    scalogram. Each column is inked from its own min to max, extended to meet
+    its neighbours, so the trace is continuous at any sampling rate. `fs` is
+    accepted for interface parity; a line plot has no frequency axis.
+    """
+    x = np.asarray(x, dtype=np.float64).ravel()
+    n_rows, n_cols = size
+    img = np.zeros(size, dtype=np.float32)
+    if x.size < 2:
+        return img
+    lo, hi = float(x.min()), float(x.max())
+    y = np.full_like(x, 0.5) if hi - lo < 1e-12 else (x - lo) / (hi - lo)
+    rows = (1.0 - y) * (n_rows - 1)
+    chunks = np.array_split(rows, n_cols) if x.size >= n_cols else \
+        [rows[[int(i)]] for i in np.linspace(0, x.size - 1, n_cols)]
+    for c, chunk in enumerate(chunks):
+        top, bottom = chunk.min(), chunk.max()
+        if c + 1 < n_cols:                  # join to the next column
+            nxt = chunks[c + 1][0]
+            top, bottom = min(top, nxt), max(bottom, nxt)
+        img[int(round(top)):int(round(bottom)) + 1, c] = 1.0
+    return img
+
+
 def render(x, fs, kind="scalogram", size=IMAGE_SIZE):
     if kind == "scalogram":
         return scalogram(x, fs, size)
     if kind == "spectrogram":
         return spectrogram(x, fs, size)
+    if kind == "lineplot":
+        return lineplot(x, fs, size)
     raise ValueError(f"unknown representation {kind!r}")
 
 

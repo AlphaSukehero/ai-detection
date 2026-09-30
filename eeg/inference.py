@@ -51,6 +51,7 @@ def analyse_signal(signal, fs, model=None, card=None,
         return {
             "model_used": False, "n_windows": 0, "windows": [],
             "episodes": [], "duration_s": float(np.size(signal) / fs),
+            "peak": None,
             "error": (f"Recording is shorter than one {window_s:.0f}s "
                       "window; nothing to analyse."),
         }
@@ -78,7 +79,7 @@ def analyse_signal(signal, fs, model=None, card=None,
             w["flagged"] = False
         return {
             "model_used": False, "n_windows": len(per_window),
-            "windows": per_window, "episodes": [],
+            "windows": per_window, "episodes": [], "peak": None,
             "duration_s": float(times[-1][1]),
             "note": ("No validated model was used, so no window was "
                      "classified. The measurements above are computed from "
@@ -113,6 +114,7 @@ def analyse_signal(signal, fs, model=None, card=None,
     return {
         "model_used": True, "n_windows": len(per_window),
         "windows": per_window, "episodes": episodes,
+        "peak": peak_window(per_window, threshold),
         "duration_s": float(times[-1][1]),
         "threshold": threshold,
         "smoothing": {"windows": smooth_windows, "min_episode_s": min_episode_s},
@@ -165,14 +167,31 @@ def _score(windows, fs, model, card, kind):
     return np.concatenate(out)
 
 
+def peak_window(per_window, threshold=DEFAULT_THRESHOLD):
+    """The single highest raw-scoring clean window, or None.
+
+    Reported alongside the verdict, never instead of it: the verdict is
+    episode-based because per-window thresholding flagged 8-22% of background
+    windows on held-out recordings. A peak over threshold outside any episode
+    is "isolated" -- worth a look at that segment, not an alarm.
+    """
+    clean = [w for w in per_window if w["artifact"] is None and w.get("score") is not None]
+    if not clean:
+        return None
+    top = max(clean, key=lambda w: w["score"])
+    return {"index": top["index"], "score": float(top["score"]),
+            "start_s": top["start_s"], "stop_s": top["stop_s"],
+            "isolated": bool(top["score"] >= threshold and not top["flagged"])}
+
+
 def summarise(result):
     """One-line clinical summary plus the headline numbers for the UI."""
     if result["n_windows"] == 0:
         return {"headline": result.get("error", "Nothing to analyse."),
-                "episodes": 0, "burden_pct": 0.0}
+                "episodes": 0, "burden_pct": 0.0, "peak_note": None}
     if not result["model_used"]:
         return {"headline": result.get("note", "No model was used."),
-                "episodes": 0, "burden_pct": 0.0}
+                "episodes": 0, "burden_pct": 0.0, "peak_note": None}
 
     episodes = result["episodes"]
     burden = sum(e["duration_s"] for e in episodes)
@@ -185,6 +204,13 @@ def summarise(result):
         headline = (f"{len(episodes)} episode(s) detected; earliest onset at "
                     f"{first['onset_s']:.1f}s lasting "
                     f"{first['duration_s']:.1f}s.")
+    peak = result.get("peak")
+    peak_note = None
+    if peak and peak["isolated"]:
+        peak_note = (f"Isolated high-scoring window at {peak['start_s']:.1f}–"
+                     f"{peak['stop_s']:.1f}s (score {peak['score']:.2f}) did not "
+                     "form an episode; review that segment.")
     return {"headline": headline, "episodes": len(episodes),
             "burden_pct": pct, "total_anomaly_s": burden,
-            "artifact_windows": result.get("artifact_windows", 0)}
+            "artifact_windows": result.get("artifact_windows", 0),
+            "peak_note": peak_note}

@@ -184,3 +184,56 @@ def test_raw_score_is_kept_next_to_the_smoothed_one():
     assert w["score"] == pytest.approx(0.95)
     assert w["smoothed_score"] < w["score"]
     assert r["smoothing"] == {"windows": 5, "min_episode_s": 10.0}
+
+
+# ------------------------------------------------------------ peak window
+
+def test_peak_window_is_reported_with_its_time():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 11, 0.93)], n)))
+    peak = r["peak"]
+    assert peak["score"] == pytest.approx(0.93)
+    assert peak["index"] == 10
+    assert peak["start_s"] == pytest.approx(r["windows"][10]["start_s"])
+    assert peak["stop_s"] == pytest.approx(r["windows"][10]["stop_s"])
+
+
+def test_an_isolated_high_window_is_noted_but_does_not_change_the_verdict():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 11, 0.93)], n)))
+    assert r["episodes"] == []
+    assert r["peak"]["isolated"] is True
+    s = summarise(r)
+    assert s["episodes"] == 0
+    assert "isolated high-scoring window" in s["peak_note"].lower()
+    assert "0.93" in s["peak_note"]
+
+
+def test_a_peak_inside_an_episode_is_not_called_isolated():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 25, 0.9)], n)))
+    assert r["peak"]["isolated"] is False
+    assert summarise(r)["peak_note"] is None
+
+
+def test_a_peak_below_threshold_is_not_called_isolated():
+    n = _n_windows()
+    r = analyse_signal(_recording(seconds=40.0), FS,
+                       model=_Model(_scores_with([(10, 11, 0.3)], n)))
+    assert r["peak"]["isolated"] is False
+
+
+def test_artifact_windows_cannot_be_the_peak():
+    n = _n_windows()
+    sig = _recording(seconds=40.0)
+    sig[int(10.2 * FS):int(10.4 * FS)] = 5000.0      # electrode pop
+    r = analyse_signal(sig, FS, model=_Model([0.99] * n))
+    art = {w["index"] for w in r["windows"] if w["artifact"]}
+    assert art and r["peak"]["index"] not in art
+
+
+def test_without_a_model_there_is_no_peak():
+    assert analyse_signal(_recording(), FS, model=None)["peak"] is None
