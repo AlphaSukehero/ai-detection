@@ -22,6 +22,7 @@ CATALOG = {
     "eeg": [
         ("burden_pct", "Anomaly burden", "%", None),
         ("episodes", "Anomalous episodes", "", None),
+        ("peak_score", "Highest window score", "", (None, 0.5)),
         ("mean_spike_rate", "Mean spike rate", "/s", None),
         ("rsp_delta", "Relative delta power", "", None),
         ("rsp_theta", "Relative theta power", "", None),

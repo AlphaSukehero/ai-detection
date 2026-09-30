@@ -67,3 +67,53 @@ def test_an_empty_file_is_refused(tmp_path):
     p.write_text("")
     with pytest.raises(RecordingError):
         read_csv_recording(str(p), fs=FS)
+
+
+# ------------------------------------------------------------------ route
+
+def _csv_upload(seconds=20.0):
+    import io
+    _t, sig = _channels(seconds=seconds)
+    text = "Fp1,O1\n" + "\n".join(f"{a:.4f},{b:.4f}" for a, b in sig.T)
+    return io.BytesIO(text.encode())
+
+
+def test_csv_upload_is_analysed_with_a_sampling_rate():
+    import app as flask_app
+    from tests.test_routes import PATIENT
+    with flask_app.app.test_client() as c:
+        data = dict(PATIENT, sampling_rate="128", task="seizure",
+                    eeg_file=(_csv_upload(), "rec.csv"))
+        html = c.post("/analyze_eeg", data=data,
+                      content_type="multipart/form-data").get_data(as_text=True)
+    assert "Per-Window Clinical Parameters" in html
+    assert "CSV, 2 channels at 128 Hz" in html
+
+
+def test_csv_upload_without_sampling_rate_is_refused():
+    import app as flask_app
+    from tests.test_routes import PATIENT
+    with flask_app.app.test_client() as c:
+        data = dict(PATIENT, task="seizure", eeg_file=(_csv_upload(), "rec.csv"))
+        html = c.post("/analyze_eeg", data=data,
+                      content_type="multipart/form-data").get_data(as_text=True)
+    assert "does not record its sampling rate" in html
+    assert "Per-Window Clinical Parameters" not in html
+
+
+def test_eeg_pdf_carries_representation_and_peak():
+    import json
+
+    import app as flask_app
+    from tests.test_pdf_reports import _pdf_text
+    report = {"task": "Seizure", "task_key": "seizure", "model_used": True,
+              "representation": "Scalogram (wavelet)", "episodes_n": 0,
+              "peak_score": 0.83, "peak_start_s": 142.0, "peak_stop_s": 144.0,
+              "peak_note": "Isolated high-scoring window at 142.0-144.0s",
+              "headline": "No anomalous episode."}
+    with flask_app.app.test_client() as c:
+        pdf = c.post("/download_eeg_report", data={"eeg_json": json.dumps(report)}).data
+    text = _pdf_text(pdf)
+    assert b"Scalogram \\(wavelet\\)" in text  # PDF escapes parentheses
+    assert b"0.830 at 142.0" in text
+    assert b"Isolated high-scoring window" in text

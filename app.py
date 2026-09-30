@@ -1409,25 +1409,43 @@ def download_satellite_report():
 _eeg_models = {}
 
 
-def get_eeg_model(task):
-    """Return (model, card) for an EEG head, or (None, None).
+EEG_REPRESENTATIONS = {"scalogram": "Scalogram (wavelet)", "lineplot": "Line plot"}
 
+
+def get_eeg_model(task, representation="scalogram"):
+    """Return (model, card) for an EEG head and representation, or (None, None).
+
+    Scalogram models live at model/eeg_<task>.keras, line-plot models at
+    model/eeg_<task>_lineplot.keras. A model only serves if its card says it
+    was trained on that representation: feeding a scalogram model line plots
+    (or the reverse) would produce confident scores that mean nothing.
     A missing model is normal: the measured parameters do not depend on one,
     and the page says "not assessed" rather than "normal".
     """
-    if task not in _eeg_models:
-        _eeg_models[task] = (None, None)
-        path = os.path.join("model", f"eeg_{task}.keras")
+    key = (task, representation)
+    if key not in _eeg_models:
+        _eeg_models[key] = (None, None)
+        suffix = "" if representation == "scalogram" else f"_{representation}"
+        path = os.path.join("model", f"eeg_{task}{suffix}.keras")
         if TF_AVAILABLE and os.path.exists(path):
             try:
-                _eeg_models[task] = (load_model(path, compile=False), load_card(path))
+                card = load_card(path)
+                if not str(card.get("preprocessing", "")).startswith(representation):
+                    raise ValueError(
+                        f"card preprocessing {card.get('preprocessing')!r} is not {representation}")
+                _eeg_models[key] = (load_model(path, compile=False), card)
             except Exception as e:
-                print(f"EEG model {task} unavailable: {e}")
-    return _eeg_models[task]
+                print(f"EEG model {task}/{representation} unavailable: {e}")
+    return _eeg_models[key]
 
 
-def _eeg_to_signal(filepath, ext, duration):
+def _eeg_to_signal(filepath, ext, duration, sampling_rate=None):
     """Upload -> (signal, fs, provenance). Raises on an unusable input."""
+    if ext == ".csv":
+        from eeg.loaders import read_csv_recording
+        signal, fs, names = read_csv_recording(filepath, sampling_rate)
+        return (np.mean(signal, axis=0), fs,
+                f"CSV, {len(names)} channels at {fs:g} Hz (values read as µV)")
     if ext in EEG_SIGNAL_EXTENSIONS:
         from eeg.loaders import read_recording
         signal, fs, names = read_recording(filepath)
@@ -1472,56 +1490,67 @@ def create_eeg_plot(result, bands, filename):
 def _eeg_page(**kw):
     kw.setdefault("patient", {})
     return render_template("eeg.html", patient_fields=PATIENT_FIELDS,
-                           gender_options=GENDER_OPTIONS, tasks=EEG_TASKS, **kw)
+                           gender_options=GENDER_OPTIONS, tasks=EEG_TASKS,
+                           representations=EEG_REPRESENTATIONS, **kw)
 
 
-@app.route("/analyze_eeg", methods=["POST"])
-def analyze_eeg():
+def _form_float(form, key):
+    try:
+        return float(form.get(key) or 0) or None
+    except (TypeError, ValueError):
+        return None
+
+
+def run_eeg_analysis(form_in, file):
+    """Everything behind an EEG analysis, shared by the page and the API.
+
+    Returns {"error", "entered"} on refusal, else {"view", "patient",
+    "saved", "result"}.
+    """
     from eeg.digitize import CalibrationError
     from eeg.loaders import RecordingError
     from eeg.inference import analyse_signal, summarise
     from eeg.metrics import BANDS
 
-    form, bind_error = patient_form(request.form)
+    form, bind_error = patient_form(form_in)
     entered, meta_errors = collect_metadata(form, PATIENT_FIELDS)
     if bind_error:
         meta_errors = [bind_error] + meta_errors
     if meta_errors:
-        return _eeg_page(error=" ".join(meta_errors), patient=entered)
+        return {"error": " ".join(meta_errors), "entered": entered}
     patient = finalize_metadata(entered, PATIENT_FIELDS)
 
-    task = request.form.get("task", "seizure")
+    task = form_in.get("task", "seizure")
     if task not in EEG_TASKS:
         task = "seizure"
-    try:
-        duration = float(request.form.get("duration") or 0) or None
-    except ValueError:
-        duration = None
+    representation = form_in.get("representation", "scalogram")
+    if representation not in EEG_REPRESENTATIONS:
+        representation = "scalogram"
+    duration = _form_float(form_in, "duration")
+    sampling_rate = _form_float(form_in, "sampling_rate")
 
-    file = request.files.get("eeg_file")
     if not file or file.filename == "":
-        return _eeg_page(error="Please upload an EEG recording or trace image.",
-                         patient=entered)
+        return {"error": "Please upload an EEG recording or trace image.",
+                "entered": entered}
     ext = os.path.splitext(os.path.basename(file.filename))[1].lower()
-    if ext not in EEG_SIGNAL_EXTENSIONS | (IMAGE_EXTENSIONS - DICOM_EXTENSIONS):
-        return _eeg_page(error=f"Unsupported file type '{ext}'.", patient=entered)
+    if ext not in EEG_SIGNAL_EXTENSIONS | {".csv"} | (IMAGE_EXTENSIONS - DICOM_EXTENSIONS):
+        return {"error": f"Unsupported file type '{ext}'.", "entered": entered}
     filepath = os.path.join(app.config["UPLOAD_FOLDER"],
                             "eeg_upload_" + uuid.uuid4().hex[:8] + ext)
     file.save(filepath)
 
     try:
-        signal, fs, provenance = _eeg_to_signal(filepath, ext, duration)
+        signal, fs, provenance = _eeg_to_signal(filepath, ext, duration, sampling_rate)
     except (CalibrationError, RecordingError) as e:
-        return _eeg_page(error=str(e), patient=entered)
+        return {"error": str(e), "entered": entered}
     except Exception as e:
         print("EEG read error:", e)
-        return _eeg_page(error=f"Could not read this recording: {e}", patient=entered)
+        return {"error": f"Could not read this recording: {e}", "entered": entered}
 
-    model, card = get_eeg_model(task)
-    result = analyse_signal(signal, fs, model=model, card=card)
+    model, card = get_eeg_model(task, representation)
+    result = analyse_signal(signal, fs, model=model, card=card, kind=representation)
     if result["n_windows"] == 0:
-        return _eeg_page(error=result.get("error", "Nothing to analyse."),
-                         patient=entered)
+        return {"error": result.get("error", "Nothing to analyse."), "entered": entered}
     summary = summarise(result)
 
     plot_filename = "eeg_timeline_" + uuid.uuid4().hex[:8] + ".png"
@@ -1540,16 +1569,28 @@ def analyze_eeg():
                                if w.get("score") is not None else None),
                      "artifact": w["artifact"] or ""})
 
+    not_assessed = None
+    if not result["model_used"]:
+        not_assessed = (f"No validated {EEG_REPRESENTATIONS[representation].lower()} "
+                        "model is installed for this task; no window was classified.")
+        if representation == "lineplot":
+            not_assessed = ("No validated line-plot model is installed for this "
+                            "task; no window was classified.")
+    peak = result.get("peak")
     view = {
         "task_label": EEG_TASKS[task],
+        "representation": representation,
+        "representation_label": EEG_REPRESENTATIONS[representation],
         "provenance": provenance,
         "duration_s": round(len(signal) / fs, 1),
         "model_used": result["model_used"],
+        "not_assessed": not_assessed,
         "n_windows": result["n_windows"],
         "artifact_windows": result.get("artifact_windows", 0),
         "episodes": result["episodes"],
+        "peak": peak,
         "summary": summary,
-        "verdict": eeg_verdict(result["model_used"], summary["episodes"]),
+        "verdict": eeg_verdict(result["model_used"], summary["episodes"], not_assessed),
         "bands": list(BANDS),
         "rows": rows,
         "card": card,
@@ -1557,12 +1598,18 @@ def analyze_eeg():
     }
     view["report"] = {
         "task": view["task_label"], "task_key": task, "source": provenance,
+        "representation": view["representation_label"],
+        "not_assessed_reason": not_assessed,
         "duration_s": view["duration_s"], "model_used": view["model_used"],
         "n_windows": view["n_windows"],
         "artifact_windows": view["artifact_windows"],
         "headline": summary["headline"],
         "episodes_n": summary["episodes"],
         "burden_pct": round(summary["burden_pct"], 1),
+        "peak_score": round(peak["score"], 3) if peak else None,
+        "peak_start_s": round(peak["start_s"], 1) if peak else None,
+        "peak_stop_s": round(peak["stop_s"], 1) if peak else None,
+        "peak_note": summary.get("peak_note"),
         "band_means": {b: round(float(np.mean([r["rsp"][i] for r in rows])), 3)
                        for i, b in enumerate(BANDS)} if rows else {},
         "mean_spikes": (round(float(np.mean([r["spikes"] for r in rows])), 2)
@@ -1574,19 +1621,28 @@ def analyze_eeg():
     view["notes"] = eeg_clinical_notes(task, view["verdict"]["label"],
                                        view["report"])
     saved = None
-    bound, _ = resolve(request.form)
+    bound, _ = resolve(form_in)
     if bound:
         saved = save_study_for(
             "eeg", bound, form, result=dumps_safe(view),
             report=report_fields(patient, {"eeg_json": dumps(view["report"])}),
             verdict=view["verdict"]["label"], headline=summary["headline"],
-            model_name=f"eeg_{task}" if view["model_used"] else "none",
+            model_name=(f"eeg_{task}" + ("" if representation == "scalogram" else f"_{representation}"))
+            if view["model_used"] else "none",
             model_version=(card or {}).get("trained"),
             measurements=eeg_measurements(view["report"]),
             files={"original": filepath,
                    "timeline": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
-    return _eeg_page(result=view, patient=patient, saved=saved,
-                     patient_rows=metadata_rows(patient, PATIENT_FIELDS))
+    return {"view": view, "patient": patient, "saved": saved, "result": result}
+
+
+@app.route("/analyze_eeg", methods=["POST"])
+def analyze_eeg():
+    out = run_eeg_analysis(request.form, request.files.get("eeg_file"))
+    if "error" in out:
+        return _eeg_page(error=out["error"], patient=out["entered"])
+    return _eeg_page(result=out["view"], patient=out["patient"], saved=out["saved"],
+                     patient_rows=metadata_rows(out["patient"], PATIENT_FIELDS))
 
 
 @app.route("/download_ecg_report", methods=["POST"])
