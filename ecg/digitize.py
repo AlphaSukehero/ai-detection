@@ -107,13 +107,69 @@ def detect_layout(gray):
     return "twelve_lead" if len(bands) >= 3 else "single"
 
 
+# The trace is the darkest ink on the page. Anything fainter than this share
+# of the darkest pixel -- the printed grid above all -- is not trace.
+TRACE_INK_FRACTION = 0.6
+# A row or column this densely inked from end to end is a drawn axes frame.
+FRAME_COVERAGE = 0.5
+FRAME_MARGIN_PX = 3
+
+
+def _trace_ink(ink):
+    """Ink with everything fainter than the trace (the grid) zeroed."""
+    peak = float(ink.max()) if ink.size else 0.0
+    if peak <= 0:
+        return ink
+    return np.where(ink >= TRACE_INK_FRACTION * peak, ink, 0.0)
+
+
+def _plot_area(dark):
+    """(top, bottom, left, right) inside a drawn axes frame, or None.
+
+    A strip exported from a plotting tool carries a frame, a title and tick
+    labels. Those are ink but not ECG: left in, the frame and title rows are
+    counted as extra trace bands and the labels drag the traced centre of
+    mass. All four sides must be present, so a sheet whose only long lines
+    are flat traces is left whole.
+    """
+    inked = dark > 0
+    rows = np.flatnonzero(inked.mean(axis=1) >= FRAME_COVERAGE)
+    cols = np.flatnonzero(inked.mean(axis=0) >= FRAME_COVERAGE)
+    if len(rows) < 2 or len(cols) < 2:
+        return None
+    h, w = dark.shape
+    top, bottom = int(rows.min()), int(rows.max())
+    left, right = int(cols.min()), int(cols.max())
+    if bottom - top < h // 4 or right - left < w // 4:
+        return None
+    # Step inward past the full thickness of each frame line.
+    while top + 1 in rows:
+        top += 1
+    while bottom - 1 in rows and bottom - 1 > top:
+        bottom -= 1
+    while left + 1 in cols:
+        left += 1
+    while right - 1 in cols and right - 1 > left:
+        right -= 1
+    box = (top + FRAME_MARGIN_PX, bottom - FRAME_MARGIN_PX + 1,
+           left + FRAME_MARGIN_PX, right - FRAME_MARGIN_PX + 1)
+    if box[1] - box[0] < 8 or box[3] - box[2] < 8:
+        return None
+    return box
+
+
 def extract_leads(image_path):
     """Digitize an ECG image into one signal per lead."""
     img = Image.open(image_path).convert("L")
     gray = np.asarray(img, dtype=float)
+    area = _plot_area(_trace_ink(255.0 - gray))
+    if area is not None:
+        gray = gray[area[0]:area[1], area[2]:area[3]]
     px_per_mm = detect_grid_scale(gray)
-    layout = detect_layout(gray)
-    ink = 255.0 - gray
+    # Layout and tracing both read the trace alone: heavy major rulings are
+    # horizontal ink bands too, and would be counted as leads.
+    ink = _trace_ink(255.0 - gray)
+    layout = detect_layout(255.0 - ink)
     w_full = gray.shape[1]
 
     if layout == "single":

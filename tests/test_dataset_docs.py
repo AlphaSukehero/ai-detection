@@ -8,5 +8,5 @@ pytestmark = pytest.mark.skipif(
 
 def test_documents_every_domain():
     text = open("data/DATASET.md").read()
-    for token in ["EuroSAT", "MIT-BIH", "inter-patient", "licence", "SHA-256"]:
+    for token in ["Brain MRI", "MIT-BIH", "inter-patient", "licence", "SHA-256"]:
         assert token.lower() in text.lower(), f"DATASET.md missing {token}"

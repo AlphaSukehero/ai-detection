@@ -36,11 +36,7 @@ from ecg.parameters import analyse as analyse_ecg_parameters
 from ecg.digitize import extract_leads
 from ecg.clinical import clinical_report, doctor_notes as ecg_doctor_notes
 from ecg.beats import segment_signal
-from reporting.pdf import build_pdf_report
-from reporting.study_reports import (
-    EEG_TASKS, render_study_pdf, eeg_verdict,
-    form_meta as _form_meta, slug as _slug,
-)
+from reporting.study_reports import EEG_TASKS, render_study_pdf, eeg_verdict
 # Re-exported for the test suite, which reaches these through `app`.
 from reporting.study_reports import (  # noqa: F401
     pdf_value as _pdf_value, clinical_from_form as _clinical_from_form,
@@ -54,7 +50,7 @@ from webapp.study_binding import (
     patient_form, report_fields, resolve, save_study_for,
 )
 from webapp.metadata import (
-    NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS, SURVEY_FIELDS,
+    NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS,
     collect_metadata, finalize_metadata, metadata_rows,
 )
 from vision.imageio import check_mri_input, load_dicom_rgb, load_mri_rgb
@@ -119,20 +115,12 @@ MRI_MODEL_CANDIDATES = [
 ]
 MRI_CARD_CLASSES = ["glioma", "meningioma", "notumor", "pituitary"]
 
-SATELLITE_MODEL_FILE = os.path.join(MODEL_FOLDER, "satellite_best.keras")
-SATELLITE_CARD_CLASSES = [
-    "AnnualCrop", "Forest", "HerbaceousVegetation", "Highway", "Industrial",
-    "Pasture", "PermanentCrop", "Residential", "River", "SeaLake",
-]
-SATELLITE_INPUT_SHAPE = [64, 64, 3]
-
 ECG_MODEL_FILE = os.path.join(MODEL_FOLDER, "ecg_cnn.keras")
 ECG_CARD_CLASSES = ["N", "S", "V", "F", "Q"]
 ECG_INPUT_SHAPE = [280, 1]
 
 
 _brain_tumor_model = None
-_satellite_model = None
 _ecg_model = None
 
 
@@ -212,20 +200,6 @@ def get_brain_tumor_model():
                 _brain_tumor_model = (model, card)
                 break
     return _brain_tumor_model
-
-
-def get_satellite_model():
-    """Return (model, card) for the EuroSAT land cover model, if installed.
-
-    Returns (None, None) when no validated model exists, in which case
-    predict_satellite() falls back to spectral analysis.
-    """
-    global _satellite_model
-    if _satellite_model is None:
-        _satellite_model = _load_validated(
-            SATELLITE_MODEL_FILE, "satellite", SATELLITE_CARD_CLASSES,
-            SATELLITE_INPUT_SHAPE, "rescale_255")
-    return _satellite_model
 
 
 def get_ecg_model():
@@ -386,7 +360,7 @@ def predict_ecg_cnn(X):
     # Which class names this model has earned the right to say. A class whose
     # measured F1 is near zero carries no information, so naming it as the
     # finding would be an invented specificity: the current card records
-    # F=0.008 and Q=0.003, meaning those labels are essentially never right.
+    # F=0.002 and Q=0.000, meaning those labels are essentially never right.
     # Such beats still count as "not normal" -- that part the model can do --
     # they just are not given a name.
     reliable = _reliable_ecg_classes(card)
@@ -484,6 +458,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp",
 DICOM_EXTENSIONS = {".dcm", ".dicom"}
 EEG_SIGNAL_EXTENSIONS = {".edf", ".bdf", ".set", ".fif"}
 ECG_DATA_EXTENSIONS = {".csv", ".txt", ".dat", ".hea", ".xml", ".json"}
+ECG_UPLOAD_EXTENSIONS = ECG_DATA_EXTENSIONS | (IMAGE_EXTENSIONS - DICOM_EXTENSIONS)
 
 
 def load_dicom_as_pil(path):
@@ -581,156 +556,6 @@ def predict_brain_tumor(image_path):
 
 
 # ============================================================
-# SATELLITE IMAGE ANALYSIS LOGIC
-# ============================================================
-
-# The four display groups the UI and PDF reports are built around.
-SATELLITE_CLASSES = {
-    0: "Forest / Vegetation",
-    1: "Urban / Built-up",
-    2: "Water Body",
-    3: "Agricultural / Barren Land"
-}
-
-# EuroSAT's 10 land cover classes collapsed onto those groups. The card's
-# class order is authoritative; this maps by name, never by index.
-SATELLITE_GROUPS = {
-    "AnnualCrop": "Agricultural / Barren Land",
-    "Forest": "Forest / Vegetation",
-    "HerbaceousVegetation": "Forest / Vegetation",
-    "Highway": "Urban / Built-up",
-    "Industrial": "Urban / Built-up",
-    "Pasture": "Agricultural / Barren Land",
-    "PermanentCrop": "Agricultural / Barren Land",
-    "Residential": "Urban / Built-up",
-    "River": "Water Body",
-    "SeaLake": "Water Body",
-}
-SATELLITE_GROUP_INDEX = {name: i for i, name in SATELLITE_CLASSES.items()}
-
-
-def predict_satellite(image_path):
-    img = load_image_rgb(image_path)
-    img_resized = img.resize((224, 224))
-    img_array = np.array(img_resized, dtype=np.float32)
-
-    r = img_array[:, :, 0]
-    g = img_array[:, :, 1]
-    b = img_array[:, :, 2]
-
-    # Calculate Pseudo-NDVI: (Green - Red) / (Green + Red + 1e-5)
-    ndvi_map = (g - r) / (g + r + 1e-5)
-    mean_ndvi = float(np.mean(ndvi_map))
-
-    r_mean = float(np.mean(r))
-    g_mean = float(np.mean(g))
-    b_mean = float(np.mean(b))
-
-    model, card = get_satellite_model()
-    fine_probs = None
-    if model is not None:
-        try:
-            size = tuple(card["input_shape"][:2])
-            scene = np.array(img.resize(size), dtype=np.float32)
-            preds = model.predict(np.expand_dims(scene / 255.0, axis=0))[0]
-            classes = card["classes"]
-            fine_probs = {classes[i]: float(preds[i]) * 100.0 for i in range(len(preds))}
-            top_idx, confidence, probs = group_eurosat_probs(fine_probs)
-        except Exception as e:
-            print("Satellite model error, using spectral analysis fallback:", e)
-            top_idx, confidence, probs = spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi)
-            fine_probs = None
-    else:
-        top_idx, confidence, probs = spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi)
-
-    top_class = SATELLITE_CLASSES[top_idx]
-
-    # Environmental health & Land breakdown metrics
-    if top_class == "Forest / Vegetation":
-        veg_pct = round(65.0 + mean_ndvi * 35.0, 1)
-        urban_pct = round(10.0, 1)
-        water_pct = round(15.0, 1)
-        barren_pct = round(100.0 - (veg_pct + urban_pct + water_pct), 1)
-        env_score = "Good (88/100)"
-    elif top_class == "Urban / Built-up":
-        urban_pct = round(70.0 + (r_mean / 255.0) * 20.0, 1)
-        veg_pct = round(15.0, 1)
-        water_pct = round(5.0, 1)
-        barren_pct = round(100.0 - (urban_pct + veg_pct + water_pct), 1)
-        env_score = "Moderate (62/100)"
-    elif top_class == "Water Body":
-        water_pct = round(80.0 + (b_mean / 255.0) * 15.0, 1)
-        veg_pct = round(10.0, 1)
-        urban_pct = round(5.0, 1)
-        barren_pct = round(100.0 - (water_pct + veg_pct + urban_pct), 1)
-        env_score = "High Water Quality (92/100)"
-    else:
-        barren_pct = round(60.0, 1)
-        veg_pct = round(25.0, 1)
-        urban_pct = round(10.0, 1)
-        water_pct = round(5.0, 1)
-        env_score = "Fair (71/100)"
-
-    # The dominant-class share is derived from the image, so the remainder can
-    # overshoot; clamp to zero and renormalise so the four shares sum to 100%.
-    shares = {
-        "Vegetation": max(0.0, veg_pct),
-        "Urban": max(0.0, urban_pct),
-        "Water": max(0.0, water_pct),
-        "Barren": max(0.0, barren_pct),
-    }
-    total = sum(shares.values()) or 1.0
-    shares = {k: v / total * 100.0 for k, v in shares.items()}
-
-    return {
-        "prediction": top_class,
-        "confidence": f"{confidence:.2f}",
-        "ndvi": f"{mean_ndvi:.3f}",
-        "environmental_health": env_score,
-        "probabilities": {k: f"{v:.2f}" for k, v in probs.items()},
-        "land_breakdown": {k: f"{v:.1f}%" for k, v in shares.items()},
-        "eurosat_probabilities": ({k: f"{v:.2f}" for k, v in fine_probs.items()}
-                                  if fine_probs else None),
-        "method": ("EuroSAT 10-class CNN land cover classifier" if fine_probs
-                   else "Spectral RGB / pseudo-NDVI analysis (no trained satellite model installed)"),
-        "findings": f"Primary terrain classified as {top_class} with spectral NDVI index of {mean_ndvi:.3f}.",
-        "recommendation": "Monitored for seasonal vegetation change and urban encroachment."
-    }
-
-
-def group_eurosat_probs(fine_probs):
-    """Collapse EuroSAT's 10 class probabilities onto the 4 display groups.
-
-    The winning group is the one with the highest summed probability, which is
-    more stable than taking the group of the single top EuroSAT class.
-    """
-    grouped = {name: 0.0 for name in SATELLITE_CLASSES.values()}
-    for cls, pct in fine_probs.items():
-        grouped[SATELLITE_GROUPS[cls]] += pct
-    top_class = max(grouped, key=grouped.get)
-    return SATELLITE_GROUP_INDEX[top_class], grouped[top_class], grouped
-
-
-def spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi):
-    if g_mean > r_mean and g_mean > b_mean and mean_ndvi > 0.05:
-        top_idx = 0  # Forest
-        probs = [82.5, 8.1, 4.2, 5.2]
-    elif b_mean > r_mean and b_mean > g_mean * 0.9:
-        top_idx = 2  # Water
-        probs = [5.1, 6.3, 85.2, 3.4]
-    elif r_mean > 120 and g_mean > 120 and b_mean > 120:
-        top_idx = 1  # Urban
-        probs = [10.2, 79.4, 3.1, 7.3]
-    else:
-        top_idx = 3  # Agriculture / Barren
-        probs = [15.1, 12.3, 6.2, 66.4]
-
-    confidence = probs[top_idx]
-    probs_dict = {SATELLITE_CLASSES[i]: probs[i] for i in range(4)}
-    return top_idx, confidence, probs_dict
-
-
-# ============================================================
 # ROUTE HANDLERS
 # ============================================================
 
@@ -745,8 +570,7 @@ def spectral_satellite_analysis(r_mean, g_mean, b_mean, mean_ndvi):
 # after an operator mistake. send_from_directory already blocks traversal;
 # this is about what is legitimately in the folder, not what is above it.
 _UPLOAD_PREFIXES = ("ecg_upload", "ecg_waveform_", "mri_upload_", "mri_analysis_",
-                    "mri_heatmap_", "mri_highlight_", "sat_upload_", "sat_analysis_",
-                    "eeg_upload_", "eeg_timeline_")
+                    "mri_heatmap_", "mri_highlight_", "eeg_upload_", "eeg_timeline_")
 # Derived from the extension sets the upload handlers actually accept, so a
 # new accepted format cannot become an unservable file through a missed edit
 # in a second hand-maintained list.
@@ -835,11 +659,6 @@ def brain_tumor():
 @app.route("/eeg")
 def eeg():
     return _eeg_page()
-
-
-@app.route("/satellite")
-def satellite():
-    return render_template("satellite.html", survey={}, survey_fields=SURVEY_FIELDS)
 
 
 @app.route("/favicon.ico")
@@ -961,6 +780,14 @@ def analyze_ecg():
     if file and file.filename != "":
         raw_name = os.path.basename(file.filename)
         file_ext = os.path.splitext(raw_name)[1].lower()
+        # Refused before it is written: a name with any other extension
+        # matches no generated-name template, so the sweep would never
+        # remove it.
+        if file_ext not in ECG_UPLOAD_EXTENSIONS:
+            return render_template("ecg.html",
+                                   error=f"Unsupported file type '{file_ext}'.",
+                                   patient=entered, patient_fields=PATIENT_FIELDS,
+                                   gender_options=GENDER_OPTIONS)
         safe_name = "ecg_upload" + uuid.uuid4().hex[:8] + file_ext
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], safe_name)
         file.save(filepath)
@@ -1191,6 +1018,11 @@ def analyze_brain_tumor():
     if file and file.filename != "":
         raw_name = os.path.basename(file.filename)
         ext = os.path.splitext(raw_name)[1].lower()
+        if ext not in IMAGE_EXTENSIONS:
+            return render_template("brain_tumor.html",
+                                   error=f"Unsupported file type '{ext}'.",
+                                   patient=entered, patient_fields=PATIENT_FIELDS,
+                                   gender_options=GENDER_OPTIONS)
         safe_name = "mri_upload_" + uuid.uuid4().hex[:8] + ext
         filepath = os.path.join(app.config["UPLOAD_FOLDER"], safe_name)
         file.save(filepath)
@@ -1274,134 +1106,6 @@ def analyze_brain_tumor():
         return render_template("brain_tumor.html", error=f"Analysis failed: {str(e)}",
                                patient=entered, patient_fields=PATIENT_FIELDS,
                                gender_options=GENDER_OPTIONS)
-
-
-# ------------------------------------------------------------
-# ANALYZE SATELLITE IMAGE
-# ------------------------------------------------------------
-
-@app.route("/analyze_satellite", methods=["POST"])
-def analyze_satellite():
-    file = request.files.get("satellite_file")
-    sample_name = request.form.get("sample_name")
-
-    entered, meta_errors = collect_metadata(request.form, SURVEY_FIELDS)
-    if meta_errors:
-        return render_template("satellite.html", error=" ".join(meta_errors),
-                               survey=entered, survey_fields=SURVEY_FIELDS)
-    survey = finalize_metadata(entered, SURVEY_FIELDS)
-
-    filepath = None
-    display_filename = None
-
-    if file and file.filename != "":
-        raw_name = os.path.basename(file.filename)
-        ext = os.path.splitext(raw_name)[1].lower()
-        safe_name = "sat_upload_" + uuid.uuid4().hex[:8] + ext
-        filepath = os.path.join(app.config["UPLOAD_FOLDER"], safe_name)
-        file.save(filepath)
-    elif sample_name:
-        # Satellite samples are stored separately from the MRI samples.
-        for candidate in (f"satellite_{sample_name}.jpg", f"satellite_{sample_name}.png"):
-            candidate_path = os.path.join("static/samples", candidate)
-            if os.path.exists(candidate_path):
-                filepath = candidate_path
-                break
-        if filepath is None:
-            return render_template(
-                "satellite.html",
-                error=f"Sample image '{sample_name}' is not installed. Please upload your own image.",
-                survey=entered, survey_fields=SURVEY_FIELDS)
-
-    if filepath is None:
-        return render_template("satellite.html", error="Please upload a satellite image.",
-                               survey=entered, survey_fields=SURVEY_FIELDS)
-
-    try:
-        img = load_image_rgb(filepath)
-        res = predict_satellite(filepath)
-
-        # Save a browser-renderable copy of the processed image
-        display_filename = "sat_analysis_" + uuid.uuid4().hex[:8] + ".png"
-        img.save(os.path.join(app.config["UPLOAD_FOLDER"], display_filename))
-
-        result = {
-            "image_filename": display_filename,
-            "prediction": res["prediction"],
-            "confidence": res["confidence"],
-            "ndvi": res["ndvi"],
-            "environmental_health": res["environmental_health"],
-            "probabilities": res["probabilities"],
-            "land_breakdown": res["land_breakdown"],
-            "findings": res["findings"],
-            "recommendation": res["recommendation"],
-            "method": res["method"]
-        }
-
-        return render_template("satellite.html", result=result, survey=survey,
-                               survey_fields=SURVEY_FIELDS,
-                               survey_rows=metadata_rows(survey, SURVEY_FIELDS))
-
-    except Exception as e:
-        print("Satellite analysis error:", e)
-        return render_template("satellite.html",
-                               error=f"Satellite image analysis failed: {str(e)}",
-                               survey=entered, survey_fields=SURVEY_FIELDS)
-
-
-# ------------------------------------------------------------
-# PDF REPORT BUILDER -- document assembly lives in reporting/pdf.py
-# ------------------------------------------------------------
-
-# ------------------------------------------------------------
-# DOWNLOAD REPORTS (PDF)
-# ------------------------------------------------------------
-
-@app.route("/download_satellite_report", methods=["POST"])
-def download_satellite_report():
-    form = request.form
-    meta = _form_meta(form, SURVEY_FIELDS)
-
-    sections = [
-        ("table", "1. Land Cover Classification", [
-            ("Terrain Analysis Attribute", "Value / Assessment"),
-            ("Dominant Land Cover Class", form.get("prediction", NOT_PROVIDED)),
-            ("Classification Confidence", f"{form.get('confidence', '—')}%"),
-            ("Vegetation Index (pseudo-NDVI)", form.get("ndvi", "—")),
-            ("Environmental Health Status", form.get("health", NOT_PROVIDED)),
-            ("Classification Method", form.get("method", NOT_PROVIDED)),
-        ]),
-        ("table", "2. Estimated Land Cover Breakdown", [
-            ("Cover Type", "Share of Scene"),
-            ("Vegetation", form.get("veg_pct", "—")),
-            ("Urban / Built-up", form.get("urban_pct", "—")),
-            ("Water", form.get("water_pct", "—")),
-            ("Barren / Agricultural", form.get("barren_pct", "—")),
-        ]),
-        ("text", "3. Analysis Findings", form.get("findings", NOT_PROVIDED)),
-        ("text", "4. Recommended Monitoring", form.get("recommendation", NOT_PROVIDED)),
-    ]
-
-    buffer = build_pdf_report(
-        title="SATELLITE LAND COVER ANALYSIS REPORT",
-        subtitle="Multi-Spectral Remote Sensing & Terrain Classification",
-        accent="#2563eb",
-        meta=meta,
-        meta_fields=SURVEY_FIELDS,
-        meta_heading="Survey & Acquisition Details",
-        sections=sections,
-        disclaimer=(
-            "Disclaimer: Land cover shares and the vegetation index are estimated from "
-            "RGB imagery using a pseudo-NDVI approximation, not from calibrated "
-            "multi-spectral bands. Treat all values as indicative only."
-        ),
-        footer_text="Unified AI Diagnostic Platform — Satellite Land Cover Analysis"
-    )
-
-    name = _slug(meta.get("survey_id"), _slug(meta.get("site_name"), "survey"))
-    return send_file(buffer, as_attachment=True,
-                     download_name=f"Satellite_Report_{name}.pdf",
-                     mimetype="application/pdf")
 
 
 # ------------------------------------------------------------

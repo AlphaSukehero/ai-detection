@@ -53,57 +53,7 @@ both train and validation, making validation scores optimistic.
 
 ---
 
-## 2. EuroSAT (10-class land cover)
-
-- **Source:** `blanchon/EuroSAT_RGB` on the Hugging Face datasets hub
-  (parquet shards). The underlying EuroSAT RGB dataset (Helber et al., 2019)
-  is published under the **MIT licence**; the Sentinel-2 imagery it derives
-  from is Copernicus open data.
-- **Download:** `.venv/bin/python scripts/download_raw.py eurosat`
-- **Prepare:** `.venv/bin/python scripts/prepare_eurosat.py`
-- **Classes (authoritative order):** `AnnualCrop`, `Forest`,
-  `HerbaceousVegetation`, `Highway`, `Industrial`, `Pasture`,
-  `PermanentCrop`, `Residential`, `River`, `SeaLake`
-- **Manifest:** `data/manifests/eurosat.csv`
-
-### Split policy
-
-The upstream train/validation/test parquet shards are used as-is; the
-preparation script only decodes them into a per-class image tree. Using the
-publisher's split keeps results comparable with published numbers and avoids
-inventing a split that could differ from the literature.
-
-### Counts
-
-27,000 images at 64×64 RGB, split **16,200 train / 5,400 val / 5,400 test**.
-Per-class train counts:
-
-| Class | Train |
-|---|---|
-| AnnualCrop | 1791 |
-| Forest | 1787 |
-| HerbaceousVegetation | 1799 |
-| Highway | 1505 |
-| Industrial | 1492 |
-| Pasture | 1195 |
-| PermanentCrop | 1481 |
-| Residential | 1863 |
-| River | 1460 |
-| SeaLake | 1827 |
-
-### Caveats
-
-- EuroSAT patches are geographically clustered: tiles adjacent on the ground
-  can land in different splits, so some spatial autocorrelation between train
-  and test remains. This is inherent to the published split.
-- Classes are mildly imbalanced (Pasture is the smallest at ~1,200 train
-  images versus ~1,860 for Residential).
-- This is the **RGB** variant only — the 13-band multispectral version is not
-  used, so models cannot exploit near-infrared separability.
-
----
-
-## 3. MIT-BIH Arrhythmia (5-class AAMI beat classification)
+## 2. MIT-BIH Arrhythmia (5-class AAMI beat classification)
 
 - **Source:** the MIT-BIH Arrhythmia Database on PhysioNet, fetched with
   `wfdb.dl_database`. Published under the **ODC-By 1.0** licence; PhysioNet's
@@ -169,7 +119,6 @@ output for exact per-split, per-class distributions.
 ```bash
 .venv/bin/python scripts/download_raw.py all
 .venv/bin/python scripts/prepare_mri.py
-.venv/bin/python scripts/prepare_eurosat.py
 .venv/bin/python scripts/prepare_ecg.py
 .venv/bin/python -m pytest tests/ -v
 ```

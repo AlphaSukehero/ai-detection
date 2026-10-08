@@ -1,4 +1,4 @@
-"""The patient / survey metadata block shared by the pages and the reports.
+"""The patient metadata block shared by the pages and the reports.
 
 Split out of app.py because both the Flask routes and the PDF builder need
 these definitions, and having the renderer import them from the application
@@ -25,18 +25,6 @@ PATIENT_FIELDS = [
     ("clinical_history", "Clinical History / Indication"),
 ]
 
-# Fields captured for non-clinical satellite surveys.
-SURVEY_FIELDS = [
-    ("site_name", "Site / Area Name"),
-    ("survey_id", "Survey Reference ID"),
-    ("coordinates", "Coordinates (lat, lon)"),
-    ("capture_date", "Image Capture Date"),
-    ("sensor", "Sensor / Source"),
-    ("analyst", "Analyst"),
-    ("survey_notes", "Survey Notes"),
-]
-
-
 
 def _clean_text(value, max_length=200):
     """Trim, collapse whitespace and bound the length of a free-text field."""
@@ -57,7 +45,7 @@ def collect_metadata(form, fields):
     errors = []
 
     for key, _label in fields:
-        limit = 1000 if key in ("clinical_history", "survey_notes") else 200
+        limit = 1000 if key == "clinical_history" else 200
         values[key] = _clean_text(form.get(key), limit)
 
     if values.get("age"):
@@ -74,13 +62,12 @@ def collect_metadata(form, fields):
         errors.append("Please select a valid gender option.")
         values["gender"] = ""
 
-    for date_key in ("study_date", "capture_date"):
-        if values.get(date_key):
-            try:
-                datetime.strptime(values[date_key], "%Y-%m-%d")
-            except ValueError:
-                errors.append("Date must be in YYYY-MM-DD format.")
-                values[date_key] = ""
+    if values.get("study_date"):
+        try:
+            datetime.strptime(values["study_date"], "%Y-%m-%d")
+        except ValueError:
+            errors.append("Date must be in YYYY-MM-DD format.")
+            values["study_date"] = ""
 
     return values, errors
 

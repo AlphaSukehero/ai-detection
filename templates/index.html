@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Medical & Satellite Analysis Platform</title>
+    <title>AI Medical Analysis Platform</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
 </head>
 <body>
@@ -14,7 +14,7 @@
                 <div class="nav-logo">AI</div>
                 <div class="nav-brand-text">
                     <h1>UNIFIED AI PLATFORM</h1>
-                    <p>Medical & Remote Sensing Intelligence</p>
+                    <p>Medical Imaging &amp; Signal Intelligence</p>
                 </div>
             </a>
             {% with active = "/" %}{% include "_nav_links.html" %}{% endwith %}
@@ -23,10 +23,10 @@
         <!-- Hero Section -->
         <header class="hero">
             <div class="hero-badge">
-                <span class="dot"></span> NEXT-GEN MULTI-DOMAIN AI ENGINE
+                <span class="dot"></span> MULTI-MODALITY CLINICAL AI ENGINE
             </div>
             <h1>Artificial Intelligence Platform</h1>
-            <p>Integrated deep learning and neural network algorithms for high-accuracy diagnostic imaging and remote sensing analytics.</p>
+            <p>Integrated deep learning and neural network algorithms for diagnostic imaging and biosignal analysis.</p>
         </header>
 
         <!-- Module Cards -->
@@ -63,7 +63,7 @@
                 <div class="features-list">
                     <div class="feature-item">
                         <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <span>8-Qubit PennyLane Circuit</span>
+                        <span>AAMI 5-Class Beat Classification</span>
                     </div>
                     <div class="feature-item">
                         <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
@@ -91,30 +91,6 @@
                 </div>
                 <a href="/eeg" class="btn-primary" style="background: var(--eeg-gradient);">
                     Launch EEG Dashboard &rarr;
-                </a>
-            </div>
-
-            <!-- Satellite Card -->
-            <div class="dashboard-card sat-card">
-                <div class="card-icon satellite">🛰️</div>
-                <h2>Satellite Remote Sensing</h2>
-                <p>Deep land cover classification (EfficientNet Architecture) with multi-spectral vegetation index estimation and environmental scoring.</p>
-                <div class="features-list">
-                    <div class="feature-item">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <span>Terrain & Land Cover Classification</span>
-                    </div>
-                    <div class="feature-item">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <span>Estimated NDVI Vegetation Index</span>
-                    </div>
-                    <div class="feature-item">
-                        <svg width="16" height="16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
-                        <span>Environmental PDF Export</span>
-                    </div>
-                </div>
-                <a href="/satellite" class="btn-primary">
-                    Launch Satellite Dashboard &rarr;
                 </a>
             </div>
         </main>

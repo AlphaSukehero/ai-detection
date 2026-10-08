@@ -1,8 +1,7 @@
-"""End-to-end tests for the MRI and satellite routes.
+"""End-to-end tests for the MRI route and the upload name policy.
 
-Both routes were previously untested. They contain the Grad-CAM path, the
-tumour morphometry and the spectral fallback -- the places where a silent
-wrong answer is most likely and least visible.
+The MRI route contains the Grad-CAM path -- the place where a silent wrong
+answer is most likely and least visible.
 """
 import io
 
@@ -17,11 +16,6 @@ PATIENT = {"patient_name": "T", "patient_id": "1", "age": "40",
            "gender": "Male", "contact": "1234567890",
            "referring_physician": "D", "study_date": "2026-09-09",
            "clinical_history": "test"}
-
-SURVEY = {"site_name": "S", "survey_id": "1", "coordinates": "0, 0",
-          "capture_date": "2026-09-09", "sensor": "test",
-          "analyst": "A", "survey_notes": "test"}
-
 
 requires_mri_model = pytest.mark.skipif(
     flask_app.get_brain_tumor_model()[0] is None,
@@ -106,22 +100,6 @@ def test_mri_route_accepts_blank_metadata(client):
     resp = _post_mri(client, blank)
     assert resp.status_code == 200
     assert "Peak Attention Location" in resp.get_data(as_text=True)
-
-
-# ---------------------------------------------------------- satellite route
-
-def test_satellite_route_renders_a_classification(client):
-    resp = _post(client, "/analyze_satellite", "satellite_file", SURVEY,
-                 filename="scene.png")
-    assert resp.status_code == 200
-    html = resp.get_data(as_text=True)
-    assert any(g in html for g in ["Forest", "Urban", "Water", "Agricultural"])
-
-
-def test_satellite_route_rejects_a_request_with_no_file(client):
-    resp = client.post("/analyze_satellite", data=dict(SURVEY),
-                       content_type="multipart/form-data")
-    assert resp.status_code == 200
 
 
 # ------------------------------------------------------- upload name policy

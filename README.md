@@ -1,13 +1,13 @@
 # AI Detection
 
-A Flask application that runs three image/signal analysers behind a web UI and
-generates a PDF report for each:
+A Flask application that runs three image/signal analysers behind a web UI,
+generates a PDF report for each, and keeps per-patient study records:
 
 | Page | Input | Model | Measured performance |
 |---|---|---|---|
 | `/ecg` | MIT-BIH CSV/TXT, or a photo of an ECG strip | 1D CNN + RR context, AAMI 5-class beat classifier | accuracy 0.858, macro-F1 0.400 (0.667 over N/S/V) |
 | `/brain-tumor` | MRI slice (JPEG/PNG/DICOM) | VGG16 transfer, 4-class | accuracy 0.927, macro-F1 0.925 |
-| `/satellite` | Satellite scene (JPEG/PNG/TIFF) | EuroSAT CNN, 10-class → 4 display groups | accuracy 0.957, macro-F1 0.957 |
+| `/eeg` | EDF/BDF/SET/FIF, CSV, or a trace image | Windowed scalogram CNNs: seizure and cortical-slowing screens | seizure: sensitivity 0.739, ROC-AUC 0.896; slowing: sensitivity 0.523, ROC-AUC 0.680 |
 
 Those numbers come from each model's JSON card in `model/`, written at
 training time. They are the numbers the app is entitled to claim.
@@ -24,7 +24,7 @@ cards into `model/`.
 ```bash
 python -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements-eeg.txt
-.venv/bin/python app.py          # http://127.0.0.1:5050 — all modules (ECG, EEG, MRI, satellite)
+.venv/bin/python app.py          # http://127.0.0.1:5050 — all modules (ECG, EEG, MRI, patients)
 ```
 
 `PORT` overrides the port. `UPLOAD_TTL_SECONDS` (default 86400) sets how long
@@ -38,7 +38,7 @@ below.
 ```bash
 .venv/bin/pip install -r requirements-train.txt
 .venv/bin/python scripts/download_raw.py     # raw datasets -> data/raw/
-.venv/bin/python scripts/prepare_ecg.py      # ... and prepare_mri, prepare_eurosat
+.venv/bin/python scripts/prepare_ecg.py      # ... and prepare_mri
 scripts/train_all.sh                         # or: scripts/train_all.sh ecg mri
 EPOCHS=1 scripts/train_all.sh                # smoke test the whole pipeline
 ```
@@ -68,8 +68,8 @@ these are enforced by tests in `tests/test_no_fabricated_output.py`:
   a brightness threshold.
 - **No unmeasured class names.** A beat class whose card-recorded F1 is below
   `MIN_REPORTABLE_F1` (0.30) is never named in the UI or the report. With the
-  current ECG model that suppresses S, F and Q — their F1s are 0.097, 0.008
-  and 0.003. Such beats still count toward "abnormal"; they are reported as
+  current ECG model that suppresses S, F and Q — their F1s are 0.261, 0.002
+  and 0.000. Such beats still count toward "abnormal"; they are reported as
   an unnamed group.
 - **Reports state absence.** With no classification, the PDF prints
   "Not performed" and the reason, not em-dashes that read like a missing
@@ -132,27 +132,28 @@ all-class macro-F1 and one over the classes with real support (N, S, V), and
 the app refuses to name any class whose measured F1 is below 0.30 — so
 suppression is driven by what was measured, not by a hand-written list.
 
-### Known limitation: tumour morphometry
+### Known limitation: no tumour measurements
 
-"Estimated Area", "Estimated Severity" and "Estimated Spread" on the MRI page
-are computed from a Grad-CAM heatmap thresholded at the 90th percentile.
-Grad-CAM shows where a classifier looked; it is not a segmentation, and these
-figures inherit that. They are labelled "Estimated" for that reason. A small
-U-Net trained on BraTS would make them real measurements.
+The MRI page reports a class, a Grad-CAM attention overlay and the location
+of peak attention — nothing else. Grad-CAM shows where a classifier looked;
+it is not a segmentation, so lesion size and severity are deliberately not
+reported. A small U-Net trained on BraTS would make them real measurements.
 
 ## Layout
 
 ```
-app.py              Flask site: ECG, EEG, MRI and satellite routes, model loading
+app.py              Flask site: ECG, EEG and MRI routes, model loading
 ecg/                Signal processing: digitize, delineate, parameters, quality
 ecg/beats.py        Beat segmentation + RR context, shared by training and app
 ecg/clinical.py     Structured reading: formula, range, verdict, precautions
-vision/gradcam.py   Saliency maps and the tumour geometry derived from them
-reporting/pdf.py    ReportLab document assembly
-webapp/metadata.py  Patient / survey metadata shared by pages and reports
+eeg/                Loaders, windowing, scalogram/line-plot images, inference
+vision/             MRI input gate, Grad-CAM saliency, clinical wording
+records/            Patient record store (SQLite + study files), comparisons
+reporting/          ReportLab document assembly, study reports, trends
+webapp/             Patient metadata, /patients blueprint, study binding
 mlkit/              Model cards (registry) and dataset manifests
 scripts/            download_raw, prepare_*, train_*
-tests/              137 tests; model-dependent ones skip when no checkpoint
+tests/              pytest suite; model-dependent tests skip when no checkpoint
 ```
 
 ## Development

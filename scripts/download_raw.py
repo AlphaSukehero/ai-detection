@@ -2,36 +2,12 @@
 import os
 import sys
 import json
-import urllib.request
 
 RAW = "data/raw"
-HF = "https://huggingface.co/api/datasets/blanchon/EuroSAT_RGB/parquet/default"
 
 
 def log(msg):
     print(msg, flush=True)
-
-
-def download(url, dest):
-    if os.path.exists(dest) and os.path.getsize(dest) > 0:
-        log(f"  skip (exists): {dest}")
-        return
-    tmp = dest + ".part"
-    with urllib.request.urlopen(url, timeout=120) as r, open(tmp, "wb") as f:
-        while True:
-            chunk = r.read(1 << 20)
-            if not chunk:
-                break
-            f.write(chunk)
-    os.replace(tmp, dest)
-    log(f"  ok: {dest} ({os.path.getsize(dest)/1e6:.1f} MB)")
-
-
-def eurosat():
-    log("EuroSAT parquet shards:")
-    os.makedirs(f"{RAW}/eurosat", exist_ok=True)
-    for split in ["train", "validation", "test"]:
-        download(f"{HF}/{split}/0.parquet", f"{RAW}/eurosat/{split}.parquet")
 
 
 def mitdb():
@@ -58,8 +34,6 @@ def mitdb():
 
 if __name__ == "__main__":
     which = sys.argv[1] if len(sys.argv) > 1 else "all"
-    if which in ("all", "eurosat"):
-        eurosat()
     if which in ("all", "mitdb"):
         mitdb()
     log("DOWNLOADS COMPLETE")

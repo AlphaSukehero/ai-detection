@@ -1,5 +1,5 @@
 # EEG subsystem. Needed by the /eeg page (EDF/BDF/SET reading, scalograms);
-# the ECG/MRI/satellite pages and the training set do not need them.
+# the ECG/MRI pages and the training set do not need them.
 #
 #   .venv/bin/pip install -r requirements-eeg.txt
 #   The EEG page is served by app.py at /eeg.
