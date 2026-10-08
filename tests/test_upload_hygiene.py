@@ -58,8 +58,8 @@ def test_sweep_on_a_missing_folder_is_not_an_error(monkeypatch, tmp_path):
     "mri_upload_0123abcd.jpeg",
     "mri_heatmap_0123abcd.png",
     "mri_highlight_0123abcd.png",
-    "sat_upload_0123abcd.tif",
-    "sat_analysis_0123abcd.png",
+    "eeg_upload_0123abcd.edf",
+    "eeg_timeline_0123abcd.png",
 ])
 def test_every_generated_name_template_is_servable(name):
     """A name this app writes but will not serve is a broken image on the page."""
@@ -73,3 +73,18 @@ def test_every_generated_name_template_is_servable(name):
 ])
 def test_names_outside_the_templates_are_refused(name):
     assert not flask_app._is_generated_name(name), name
+
+
+@pytest.mark.parametrize("route,field", [
+    ("/analyze_ecg", "ecg_file"),
+    ("/analyze_brain_tumor", "mri_file"),
+])
+def test_an_unsupported_upload_is_refused_before_it_is_written(uploads, route, field):
+    """A .py saved as ecg_upload<hex>.py matches no generated-name template,
+    so the sweep would never remove it: refuse it before it reaches disk."""
+    import io
+    with flask_app.app.test_client() as c:
+        resp = c.post(route, data={field: (io.BytesIO(b"print('x')"), "notes.py")},
+                      content_type="multipart/form-data")
+    assert "Unsupported file type" in resp.get_data(as_text=True)
+    assert list(uploads.iterdir()) == []

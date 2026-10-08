@@ -28,10 +28,10 @@ def _trace_png(freq=5.0, duration=20.0, width=2000, height=200):
     return buf
 
 
-@pytest.mark.parametrize("path", ["/", "/ecg", "/eeg", "/brain-tumor", "/satellite"])
+@pytest.mark.parametrize("path", ["/", "/ecg", "/eeg", "/brain-tumor"])
 def test_every_page_links_every_module(client, path):
     html = client.get(path).get_data(as_text=True)
-    for href in ['href="/ecg"', 'href="/eeg"', 'href="/brain-tumor"', 'href="/satellite"']:
+    for href in ['href="/ecg"', 'href="/eeg"', 'href="/brain-tumor"', 'href="/patients"']:
         assert href in html, (path, href)
 
 

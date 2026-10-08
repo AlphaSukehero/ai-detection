@@ -14,9 +14,8 @@ declare -A JOBS=(
   [ecg]=scripts/train_ecg_cnn.py
   [mri]=scripts/train_mri_cnn.py
   [vgg16]=scripts/train_mri_vgg16.py
-  [eurosat]=scripts/train_eurosat.py
 )
-ORDER=(ecg mri vgg16 eurosat)
+ORDER=(ecg mri vgg16)
 [ $# -gt 0 ] && ORDER=("$@")
 
 mkdir -p logs

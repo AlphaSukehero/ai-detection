@@ -24,10 +24,6 @@ PATIENT = {"patient_name": "T", "patient_id": "MRN-1", "age": "40",
            "referring_physician": "D", "study_date": "2026-09-09",
            "clinical_history": "test"}
 
-SURVEY = {"site_name": "S", "survey_id": "SV-1", "coordinates": "0, 0",
-          "capture_date": "2026-09-09", "sensor": "test",
-          "analyst": "A", "survey_notes": "test"}
-
 
 def _is_pdf(resp):
     assert resp.status_code == 200, resp.status_code
@@ -59,12 +55,6 @@ def test_brain_tumor_report_downloads(client):
                 findings="x", recommendation="y", tumor_area="3.2",
                 severity="Moderate", spread="Limited")
     _is_pdf(client.post("/download_brain_tumor_report", data=data))
-
-
-def test_satellite_report_downloads(client):
-    data = dict(SURVEY, prediction="Forest / Vegetation", confidence="95.10",
-                findings="x", recommendation="y")
-    _is_pdf(client.post("/download_satellite_report", data=data))
 
 
 def test_report_filename_is_derived_from_the_identifier(client):

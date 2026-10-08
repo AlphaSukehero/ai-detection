@@ -15,7 +15,6 @@
     --ecg-gradient: linear-gradient(135deg, #ef4444, #f43f5e);
     --mri-gradient: linear-gradient(135deg, #8b5cf6, #d946ef);
     --eeg-gradient: linear-gradient(135deg, #10b981, #14b8a6);
-    --sat-gradient: linear-gradient(135deg, #3b82f6, #06b6d4);
     
     --text-primary: #f8fafc;
     --text-secondary: #94a3b8;
@@ -216,7 +215,6 @@ body {
 
 .dashboard-card.brain-card::before { background: var(--mri-gradient); }
 .dashboard-card.ecg-card::before { background: var(--ecg-gradient); }
-.dashboard-card.sat-card::before { background: var(--sat-gradient); }
 
 .dashboard-card:hover {
     transform: translateY(-8px);
@@ -240,7 +238,6 @@ body {
 .card-icon.brain { background: rgba(139, 92, 246, 0.15); border: 1px solid rgba(139, 92, 246, 0.3); }
 .card-icon.ecg { background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); }
 .card-icon.eeg { background: rgba(16, 185, 129, 0.15); border: 1px solid rgba(16, 185, 129, 0.3); }
-.card-icon.satellite { background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.3); }
 
 .dashboard-card h2 {
     font-family: var(--font-heading);

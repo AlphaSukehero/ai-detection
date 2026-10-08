@@ -14,7 +14,7 @@ def test_save_and_load_roundtrip(tmp_path):
 def test_validate_rejects_wrong_task():
     card = {"task": "mri", "classes": ["a"], "input_shape": [8, 8, 3], "preprocessing": "rescale_255"}
     with pytest.raises(RegistryError, match="task"):
-        validate_card(card, "satellite", ["a"], [8, 8, 3], "rescale_255")
+        validate_card(card, "ecg", ["a"], [8, 8, 3], "rescale_255")
 
 
 def test_validate_rejects_class_mismatch():

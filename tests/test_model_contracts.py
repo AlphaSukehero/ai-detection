@@ -7,7 +7,6 @@ from mlkit.registry import load_card, validate_card
 CASES = [
     ("model/mri_vgg16.keras", "mri", 4, [224, 224, 3], "vgg16_preprocess_input"),
     ("model/mri_cnn.keras", "mri", 4, [128, 128, 3], "rescale_255"),
-    ("model/satellite_best.keras", "satellite", 10, [64, 64, 3], "rescale_255"),
     ("model/ecg_cnn.keras", "ecg", 5, [280, 1], "beat_zscore"),
 ]
 

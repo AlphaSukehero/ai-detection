@@ -1,7 +1,7 @@
 """ReportLab document assembly for the three PDF reports.
 
 Split out of app.py: this is a document renderer, not application logic. It
-knows nothing about MRI, ECG or satellite imagery -- callers hand it a title,
+knows nothing about MRI, ECG or EEG -- callers hand it a title,
 an accent colour, a metadata block and a list of (kind, heading, payload)
 sections.
 """
