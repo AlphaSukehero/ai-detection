@@ -157,3 +157,67 @@ def test_digitize_to_analyse_reports_the_true_heart_rate(tmp_path):
     hr = report["heart_rate"].value
     assert hr is not None
     assert abs(hr - truth["hr_bpm"]) / truth["hr_bpm"] < 0.03, hr
+
+
+def _render_chart_strip(path, hr_bpm=72.0, px_per_mm=16.0, h=600, w=1800):
+    """A rhythm strip as a plotting library draws it: a black axes frame,
+    light minor and heavier major rulings inside it, and dark title / tick
+    label text in the margins outside it."""
+    img = np.full((h, w), 255.0)
+    top, bottom, left, right = 55, 512, 117, 1778
+    minor, major = int(px_per_mm), int(px_per_mm) * 5
+    for x in range(left, right, minor):
+        img[top:bottom, x] = 215.0
+    for y in range(top, bottom, minor):
+        img[y, left:right] = 215.0
+    for x in range(left, right, major):
+        img[top:bottom, x] = 170.0
+    for y in range(top, bottom, major):
+        img[y, left:right] = 170.0
+
+    fs = px_per_mm * 25.0
+    rr_px = fs * 60.0 / hr_bpm
+    base = 400
+    y = np.full(w, float(base))
+    for beat in np.arange(left + rr_px / 2, right - 20, rr_px):
+        c = int(beat)
+        for k, dy in enumerate([-30, -110, -170, -110, -30]):
+            y[c + k * 3:c + k * 3 + 3] = base + dy
+    y = y.astype(int)
+    for x in range(left, right - 1):
+        lo, hi = sorted((y[x], y[x + 1]))
+        img[lo - 1:hi + 2, x] = 0.0
+
+    img[top:top + 2, left:right] = 0.0                  # axes frame
+    img[bottom:bottom + 2, left:right + 2] = 0.0
+    img[top:bottom, left:left + 2] = 0.0
+    img[top:bottom, right:right + 2] = 0.0
+    rng = np.random.default_rng(0)
+    for (r0, r1, c0, c1) in [(25, 42, 650, 1240),       # title
+                             (555, 572, 860, 1030),     # x label
+                             (90, 104, 60, 100), (160, 174, 60, 100),
+                             (300, 314, 60, 100), (440, 454, 40, 100),
+                             (528, 542, 330, 370), (528, 542, 1000, 1050)]:
+        block = img[r0:r1, c0:c1]
+        block[rng.random(block.shape) < 0.45] = 0.0
+    Image.fromarray(img.astype(np.uint8)).save(path)
+    return fs
+
+
+def test_chart_style_strip_is_one_lead_not_a_twelve_lead_sheet(tmp_path):
+    """The frame, title and heavy rulings are not trace bands. Counting them
+    split a single strip into twelve 450-px panels."""
+    path = os.path.join(tmp_path, "chart.png")
+    _render_chart_strip(path)
+    out = extract_leads(path)
+    assert out["layout"] == "single"
+    assert list(out["leads"]) == ["II"]
+
+
+def test_chart_style_strip_reports_the_true_heart_rate(tmp_path):
+    path = os.path.join(tmp_path, "chart.png")
+    _render_chart_strip(path, hr_bpm=72.0)
+    out = extract_leads(path)
+    rep = analyse(out["leads"], px_per_mm=out["px_per_mm"], from_image=True)
+    hr = rep["heart_rate"].value
+    assert hr is not None and abs(hr - 72.0) < 4.0, hr
