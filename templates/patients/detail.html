@@ -4,7 +4,7 @@
 <div class="panel">
     <div class="records-header">
         <div>
-            <div class="records-id">{{ patient.id }}</div>
+            <div class="records-id">{{ patient.id }}{% if patient.mrn %} · Patient ID entered: {{ patient.mrn }}{% endif %}</div>
             <h2 class="records-name">{{ patient.name }}</h2>
             <div class="records-facts">
                 <span>Age: <strong>{{ patient.age if patient.age is not none else "—" }}</strong></span>

@@ -293,8 +293,12 @@ def eeg_report_spec(form):
 REPORT_SPECS = {"ecg": ecg_report_spec, "eeg": eeg_report_spec, "mri": mri_report_spec}
 
 
-def render_study_pdf(modality, data, images=()):
-    """(BytesIO, filename) for one study. images: [(caption, path)]."""
+def render_study_pdf(modality, data, images=(), extra_sections=()):
+    """(BytesIO, filename) for one study. images: [(caption, path)].
+
+    extra_sections follow the study's own images: a follow-up report puts
+    the previous report there (reporting.followup).
+    """
     spec = REPORT_SPECS[modality](data)
     meta = form_meta(data)
     image_sections = [("image", caption, path) for caption, path in images]
@@ -302,7 +306,8 @@ def render_study_pdf(modality, data, images=()):
         title=spec["title"], subtitle=spec["subtitle"], accent=spec["accent"],
         meta=meta, meta_fields=PATIENT_FIELDS,
         meta_heading="Patient & Study Details",
-        sections=spec["sections"] + image_sections + spec["closing"],
+        sections=(spec["sections"] + image_sections + list(extra_sections)
+                  + spec["closing"]),
         disclaimer=spec["disclaimer"], footer_text=spec["footer_text"])
     name = slug(meta.get("patient_id"), slug(meta.get("patient_name"), "unidentified"))
     return buffer, f"{spec['file_prefix']}_{name}.pdf"

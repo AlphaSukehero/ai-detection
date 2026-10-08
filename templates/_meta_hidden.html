@@ -4,3 +4,8 @@
 {% endfor %}
 <input type="hidden" name="report_id" value="{{ meta.report_id }}">
 <input type="hidden" name="generated_at" value="{{ meta.generated_at }}">
+{% if saved and saved.study %}
+{# A saved study downloads its stored report, which includes the previous one. #}
+<input type="hidden" name="saved_study" value="{{ saved.study.id }}">
+<input type="hidden" name="saved_patient" value="{{ saved.study.patient_id }}">
+{% endif %}

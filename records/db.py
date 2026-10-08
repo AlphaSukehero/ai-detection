@@ -49,6 +49,13 @@ MIGRATIONS = [
         PRIMARY KEY (study_id, kind)
     );
     """,
+    # The ID a clinic already uses for the patient (MRN), typed on the
+    # analysis form. Matched without regard to case; the portal's own PT- ID
+    # stays the key, so nothing typed ever becomes a path or a URL segment.
+    """
+    ALTER TABLE patients ADD COLUMN mrn TEXT;
+    CREATE UNIQUE INDEX patients_by_mrn ON patients(lower(mrn)) WHERE mrn IS NOT NULL
+    """,
 ]
 
 

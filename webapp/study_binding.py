@@ -1,4 +1,7 @@
-"""Bind an ECG / EEG / MRI analysis to a registered patient and save it.
+"""Bind an ECG / EEG / MRI analysis to a patient's record and save it.
+
+The record is the one the study was started from, or the one the Patient ID
+typed with the details names (opened on first use).
 
 The analysis routes stay as they were; with a patient bound they:
   1. take identity (name, ID, age, sex, phone) from the registry, not the
@@ -16,6 +19,7 @@ from records import patients as registry
 from records import studies
 from records.compare import compare
 from records.store import absolute
+from reporting.followup import previous_details, previous_sections
 from reporting.study_reports import render_study_pdf
 from webapp.metadata import GENDER_OPTIONS
 from webapp.patients import get_conn
@@ -160,16 +164,85 @@ def save_study_for(modality, patient, form, *, result, report, verdict,
             model_name=model_name, model_version=model_version,
             measurements=measurements,
             files={k: v for k, v in files.items() if v})
-        pdf, _name = render_study_pdf(modality, study["report"],
-                                      study_images(root, study))
+        previous = studies.previous_study(conn, study)
+        pdf, _name = render_stored_pdf(root, study, previous)
         studies.attach_file(conn, root, study, "pdf", pdf.getvalue(), ".pdf")
         study = studies.get_study(conn, study["id"])
     except Exception as e:  # the result is still shown; say it was not saved
         current_app.logger.exception("study save failed")
         return {"error": f"{type(e).__name__}: {e}"}
-    previous = studies.previous_study(conn, study)
     return {"study": study, "previous": previous,
+            "previous_report": previous_view(previous),
             "rows": compare(previous, study) if previous else []}
+
+
+NO_PATIENT_ID = ("No Patient ID was entered, so this report is not kept. Enter "
+                 "the same Patient ID on every visit and each report is saved "
+                 "to that patient's record, with the previous one included.")
+
+
+def record_for(source, form):
+    """(patient or None, note) -- the record this request's result belongs to.
+
+    A study started from a patient's record names it outright. Otherwise the
+    Patient ID typed with the details decides: a known ID is that patient, a
+    new one opens a record. With no ID there is nothing to file it under.
+    """
+    patient, _err = resolve(source)
+    if patient:
+        return patient, None
+    typed = registry.clean_id(form.get("patient_id"))
+    if not typed:
+        return None, NO_PATIENT_ID
+    sex = form.get("gender")
+    patient, created = registry.find_or_create(
+        get_conn(), typed, name=form.get("patient_name"),
+        sex=sex if sex in GENDER_OPTIONS else None, phone=form.get("contact"))
+    name = " ".join(str(form.get("patient_name") or "").split())
+    note = None
+    if not created and name and name.casefold() != patient["name"].casefold():
+        note = (f"Patient ID {typed} is already on record as {patient['name']}. "
+                "This study was added to that record; if this is a different "
+                "person, use a different Patient ID.")
+    return patient, note
+
+
+def save_for_request(modality, source, form, **study):
+    """Save this request's result to the record its patient details name.
+
+    Returns what save_study_for returns, plus "note"; or {"unsaved": why}.
+    """
+    try:
+        patient, note = record_for(source, form)
+    except Exception as e:
+        current_app.logger.exception("patient record lookup failed")
+        return {"error": f"{type(e).__name__}: {e}"}
+    if patient is None:
+        return {"unsaved": note}
+    saved = save_study_for(modality, patient, form, **study)
+    saved["note"] = note
+    return saved
+
+
+def render_stored_pdf(root, study, previous):
+    """(BytesIO, filename) of a stored study's report, previous one included."""
+    extra = ()
+    if previous:
+        extra = previous_sections(previous, study, study_images(root, previous))
+    return render_study_pdf(study["modality"], study["report"],
+                            study_images(root, study), extra)
+
+
+def previous_view(previous):
+    """What a result page shows of the previous report, or None."""
+    if not previous:
+        return None
+    base = f"/patients/{previous['patient_id']}/studies/{previous['id']}"
+    return {"study_id": previous["id"], "study_date": previous["study_date"],
+            "url": base, "details": previous_details(previous),
+            "images": [{"caption": caption, "url": f"{base}/files/{kind}"}
+                       for kind, caption in PDF_IMAGES[previous["modality"]]
+                       if kind in previous["files"]]}
 
 
 def study_images(root, study):
@@ -185,3 +258,20 @@ def study_images(root, study):
 
 def dumps(obj):
     return json.dumps(obj, default=lambda o: o.item() if hasattr(o, "item") else str(o))
+
+
+def stored_report(modality, patient_id, study_id):
+    """(BytesIO, filename) of a saved study's report, or None if not saved.
+
+    A result page that was saved downloads this rather than a report rebuilt
+    from its form fields: only the stored study knows its previous report.
+    """
+    if not patient_id or not study_id:
+        return None
+    conn = get_conn()
+    study = studies.get_study(conn, study_id)
+    if (study is None or study["patient_id"] != patient_id
+            or study["modality"] != modality):
+        return None
+    return render_stored_pdf(current_app.config["RECORDS_ROOT"], study,
+                             studies.previous_study(conn, study))

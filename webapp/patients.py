@@ -146,10 +146,9 @@ def study_pdf(pid, sid):
         return send_file(path, mimetype="application/pdf", as_attachment=True,
                          download_name=f"{sid}_{MODALITY_LABELS[s['modality']].replace(' ', '_')}.pdf")
     # Stored PDF missing: rebuild it from the stored report rather than fail.
-    from reporting.study_reports import render_study_pdf
-    from webapp.study_binding import study_images
-    buffer, _name = render_study_pdf(s["modality"], s["report"],
-                                     study_images(records_root(), s))
+    from webapp.study_binding import render_stored_pdf
+    buffer, _name = render_stored_pdf(
+        records_root(), s, studies.previous_study(get_conn(), s))
     return send_file(buffer, mimetype="application/pdf", as_attachment=True,
                      download_name=f"{sid}.pdf")
 

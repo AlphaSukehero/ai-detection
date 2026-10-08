@@ -139,9 +139,11 @@ def test_mri_for_a_patient_is_saved_with_images_in_the_pdf(rclient):
     assert b"/Subtype /Image" in pdf
 
 
-def test_a_typed_mrn_in_quick_analysis_is_not_a_record_lookup(rclient):
+def test_a_typed_mrn_in_quick_analysis_is_never_refused_as_unknown(rclient):
+    """`record_id` must exist; a typed Patient ID opens a record instead."""
     data = dict(VISIT, sample_type="normal", patient_name="X", patient_id="MRN-8821")
     html = rclient.post("/analyze_ecg", data=data,
                         content_type="multipart/form-data").get_data(as_text=True)
     assert "No patient with ID" not in html
     assert "ECG Waveform Parameters" in html and "MRN-8821" in html
+    assert "Saved to record" in html
