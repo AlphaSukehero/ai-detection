@@ -39,7 +39,10 @@
 
                 <form action="/analyze_eeg" method="POST" enctype="multipart/form-data" id="eeg-form">
                     <div style="display: grid; gap: 28px;">
+                        {% with duration_field = {"name": "duration", "max": 86400, "step": "any", "placeholder": "e.g. 30",
+                            "hint": "Seconds the recording spans. An image has pixels and a CSV has rows, not seconds: without a duration, a sampling rate or a calibration grid the analysis is refused rather than guessed."} %}
                         {% include "_patient_form.html" %}
+                        {% endwith %}
 
                         <div style="display: flex; flex-direction: column; gap: 16px;">
                             <h3 style="font-family: var(--font-heading); font-size: 16px; color: var(--text-primary);">📈 EEG Recording</h3>
@@ -66,13 +69,7 @@
                                     <label for="sampling_rate">Sampling rate (Hz) — CSV only</label>
                                     <input type="number" id="sampling_rate" name="sampling_rate" min="1" max="10000" step="any"
                                            placeholder="e.g. 256" value="{{ request.form.get('sampling_rate', '') }}">
-                                    <div class="field-hint">A CSV has no timebase of its own. One column per channel, values in µV; a time column is ignored.</div>
-                                </div>
-                                <div class="field">
-                                    <label for="duration">Recording duration (seconds) — images only</label>
-                                    <input type="number" id="duration" name="duration" min="0" max="86400" step="1"
-                                           placeholder="e.g. 30" value="{{ request.form.get('duration', '') }}">
-                                    <div class="field-hint">An image has pixels, not samples. Hertz needs seconds, so without a duration or a detectable calibration grid the analysis is refused rather than guessed.</div>
+                                    <div class="field-hint">A CSV has no timebase of its own: enter this or the recording duration. One column per channel, values in µV; a time column is ignored.</div>
                                 </div>
                             </div>
 

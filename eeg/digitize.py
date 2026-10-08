@@ -217,8 +217,20 @@ def digitize_channels(path_or_array, duration_s=None, px_per_mm=None,
     """
     gray = load_grayscale(path_or_array)
     cleaned = remove_grid(gray)
+    bands = find_channel_bands(cleaned)
+    # The recording spans the trace, not the page. Blank margins either side
+    # carry no samples: left in, a stated duration is spread over them, so
+    # every frequency reads high and every timestamp is shifted.
+    if bands:
+        # A column blanked as a grid line was drawn on, so it is not margin.
+        inked = (cleaned != gray).any(axis=0)
+        for r0, r1 in bands:
+            inked |= ((1.0 - cleaned[r0:r1]) > 0.25).any(axis=0)
+        cols = np.flatnonzero(inked)
+        cleaned = cleaned[:, cols[0]:cols[-1] + 1]
+        gray = gray[:, cols[0]:cols[-1] + 1]
     traces = []
-    for r0, r1 in find_channel_bands(cleaned):
+    for r0, r1 in bands:
         try:
             traces.append(extract_trace(cleaned[r0:r1]))
         except CalibrationError:

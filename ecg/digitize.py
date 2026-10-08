@@ -173,8 +173,15 @@ def extract_leads(image_path):
     w_full = gray.shape[1]
 
     if layout == "single":
+        if area is None:
+            # No drawn frame to bound the recording, so the trace bounds it.
+            # Blank paper either side carries no samples: left in, a stated
+            # duration is spread over it and every interval reads long.
+            cols = np.flatnonzero((ink > 0).any(axis=0))
+            if len(cols):
+                ink = ink[:, cols[0]:cols[-1] + 1]
         return {"leads": {"II": _trace_row_band(ink)},
-                "layout": layout, "px_per_mm": px_per_mm, "width": w_full}
+                "layout": layout, "px_per_mm": px_per_mm, "width": ink.shape[1]}
 
     h, w = ink.shape
     leads = {}

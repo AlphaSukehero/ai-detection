@@ -1,4 +1,6 @@
 {# Patient metadata block shared by the ECG, EEG and MRI analysis pages.
+   A page that analyses a recording passes `duration_field` (name, max, step,
+   placeholder, hint) and the duration is asked here, with the intake.
    With `bound` (a registered patient), identity comes from the registry and
    only the per-visit fields are entered; the study is saved to the record. #}
 {% if bound %}
@@ -28,6 +30,16 @@
                    autocomplete="off" placeholder="e.g. Dr. A. Mehta"
                    value="{{ patient.get('referring_physician', '') if patient.get('referring_physician') != 'Not provided' else '' }}">
         </div>
+        {% if duration_field %}
+        <div class="field">
+            <label for="{{ duration_field.name }}">Recording Duration (seconds)</label>
+            <input type="number" id="{{ duration_field.name }}" name="{{ duration_field.name }}"
+                   min="0" max="{{ duration_field.max }}" step="{{ duration_field.step }}"
+                   placeholder="{{ duration_field.placeholder }}"
+                   value="{{ request.form.get(duration_field.name, '') }}">
+            <div class="field-hint">{{ duration_field.hint }}</div>
+        </div>
+        {% endif %}
         <div class="field field-full">
             <label for="clinical_history">Clinical History / Indication (this visit)</label>
             <textarea id="clinical_history" name="clinical_history" maxlength="1000"
@@ -96,6 +108,17 @@
             <input type="date" id="study_date" name="study_date"
                    value="{{ patient.get('study_date', '') }}">
         </div>
+
+        {% if duration_field %}
+        <div class="field">
+            <label for="{{ duration_field.name }}">Recording Duration (seconds)</label>
+            <input type="number" id="{{ duration_field.name }}" name="{{ duration_field.name }}"
+                   min="0" max="{{ duration_field.max }}" step="{{ duration_field.step }}"
+                   placeholder="{{ duration_field.placeholder }}"
+                   value="{{ request.form.get(duration_field.name, '') }}">
+            <div class="field-hint">{{ duration_field.hint }}</div>
+        </div>
+        {% endif %}
 
         <div class="field field-full">
             <label for="clinical_history">Clinical History / Indication</label>

@@ -127,3 +127,20 @@ def test_columns_without_ink_are_interpolated_not_dropped():
 def test_grayscale_loading_accepts_colour_arrays():
     rgb = np.ones((20, 20, 3)) * 255
     assert load_grayscale(rgb).max() <= 1.0
+
+
+def test_blank_side_margins_are_not_part_of_the_recording():
+    """A plot export has white margins either side of the trace. The stated
+    duration covers the trace, not the page: spreading it over the margins
+    read a 5 Hz rhythm as 6.5 Hz and shifted every timestamp."""
+    from eeg.digitize import digitize_channels
+    trace = _plot_image(freq=5.0, duration=10.0, width=1000)
+    page = np.ones((trace.shape[0], 1300))
+    page[:, 150:1150] = trace
+    signals, fs, _source, n = digitize_channels(page, duration_s=10.0)
+    assert n == 1
+    assert signals.shape[1] == 1000
+    assert fs == pytest.approx(100.0)
+    spectrum = np.abs(np.fft.rfft(signals[0]))
+    freqs = np.fft.rfftfreq(signals.shape[1], d=1.0 / fs)
+    assert abs(freqs[np.argmax(spectrum[1:]) + 1] - 5.0) < 0.3
