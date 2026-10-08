@@ -48,6 +48,10 @@
     </div>
 </div>
 {% else %}
+{# What was typed, for refilling the form. A result page passes the report's
+   metadata, where a blank reads "Not provided": that is print text, and put
+   back in a box it would be submitted as the patient's own name. #}
+{% macro entered(key) %}{{ '' if patient.get(key) in (none, 'Not provided') else patient.get(key) }}{% endmacro %}
 <div class="meta-form">
     <div class="meta-form-header">
         <h3>👤 Patient Details</h3>
@@ -63,21 +67,21 @@
             <label for="patient_name">Patient Name</label>
             <input type="text" id="patient_name" name="patient_name" maxlength="200"
                    autocomplete="off" placeholder="Full name"
-                   value="{{ patient.get('patient_name', '') }}">
+                   value="{{ entered('patient_name') }}">
         </div>
 
         <div class="field">
             <label for="patient_id">Patient ID / MRN</label>
             <input type="text" id="patient_id" name="patient_id" maxlength="200"
                    autocomplete="off" placeholder="e.g. MRN-8821"
-                   value="{{ patient.get('patient_id', '') }}">
+                   value="{{ entered('patient_id') }}">
             <div class="field-hint">Use the same ID on every visit: it is how earlier reports are found.</div>
         </div>
 
         <div class="field">
             <label for="age">Age</label>
             <input type="number" id="age" name="age" min="0" max="130" step="1"
-                   placeholder="Years" value="{{ patient.get('age', '') }}">
+                   placeholder="Years" value="{{ entered('age') }}">
         </div>
 
         <div class="field">
@@ -85,7 +89,7 @@
             <select id="gender" name="gender">
                 <option value="">Select…</option>
                 {% for option in gender_options %}
-                <option value="{{ option }}" {% if patient.get('gender') == option %}selected{% endif %}>{{ option }}</option>
+                <option value="{{ option }}" {% if entered('gender') == option %}selected{% endif %}>{{ option }}</option>
                 {% endfor %}
             </select>
         </div>
@@ -94,20 +98,21 @@
             <label for="contact">Contact Number</label>
             <input type="tel" id="contact" name="contact" maxlength="200"
                    autocomplete="off" placeholder="Phone or extension"
-                   value="{{ patient.get('contact', '') }}">
+                   value="{{ entered('contact') }}">
         </div>
 
         <div class="field">
             <label for="referring_physician">Referring Physician</label>
             <input type="text" id="referring_physician" name="referring_physician" maxlength="200"
                    autocomplete="off" placeholder="e.g. Dr. A. Mehta"
-                   value="{{ patient.get('referring_physician', '') }}">
+                   value="{{ entered('referring_physician') }}">
         </div>
 
         <div class="field">
             <label for="study_date">Study Date</label>
             <input type="date" id="study_date" name="study_date"
-                   value="{{ patient.get('study_date', '') }}">
+                   value="{{ entered('study_date') }}">
+            <div class="field-hint">Defaults to today.</div>
         </div>
 
         {% if duration_field %}
@@ -124,7 +129,7 @@
         <div class="field field-full">
             <label for="clinical_history">Clinical History / Indication</label>
             <textarea id="clinical_history" name="clinical_history" maxlength="1000"
-                      placeholder="Presenting symptoms, relevant history, reason for the study…">{{ patient.get('clinical_history', '') }}</textarea>
+                      placeholder="Presenting symptoms, relevant history, reason for the study…">{{ entered('clinical_history') }}</textarea>
         </div>
     </div>
 </div>

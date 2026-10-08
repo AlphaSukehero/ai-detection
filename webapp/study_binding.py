@@ -12,6 +12,7 @@ A save failure never hides the result: the page says it was NOT saved.
 """
 import json
 import os
+from datetime import date
 
 from flask import current_app, request
 
@@ -66,6 +67,10 @@ def patient_form(form):
     """(form dict with identity from the registry, error or None)."""
     p, err = resolve(form)
     data = {k: form.get(k) for k in form.keys()}
+    # A study with no date is filed under today; say so on the page and the
+    # report too, rather than "Not provided" beside a record dated today.
+    if not (data.get("study_date") or "").strip():
+        data["study_date"] = date.today().isoformat()
     if err:
         return data, err
     if p is None:
