@@ -66,3 +66,26 @@ def test_t_end_rejects_near_flat_t_wave():
     for i in range(qrs_offset + 20, n):
         sig[i] = 0.02 * np.exp(-((i - (qrs_offset + 40)) ** 2) / (2 * 400.0 ** 2))
     assert t_end(sig, qrs_offset, rr_s=1.0, fs=fs) is None
+
+
+def _pqrst(n_beats=12, fs=360.0, bpm=72.0, t_amp=0.35, noise=0.012, seed=0):
+    """A beat train with P and T waves and a little noise, R height 1."""
+    rr = 60.0 / bpm
+    t = np.arange(int((n_beats + 0.5) * rr * fs)) / fs
+    sig = np.random.default_rng(seed).normal(0.0, noise, len(t))
+    r_times = 0.4 + np.arange(n_beats) * rr
+    for r in r_times:
+        sig += 0.12 * np.exp(-((t - (r - 0.18)) ** 2) / (2 * 0.025 ** 2))
+        sig += 1.00 * np.exp(-((t - r) ** 2) / (2 * 0.012 ** 2))
+        sig += t_amp * np.exp(-((t - (r + 0.25)) ** 2) / (2 * 0.045 ** 2))
+    return sig, (r_times * fs).astype(int)
+
+
+def test_t_waves_are_not_counted_as_beats():
+    """A T wave a third the height of R is ordinary. Counting some of them
+    as beats reported a 72 bpm sinus rhythm at 79 bpm and 'irregular'."""
+    for seed in range(5):
+        sig, truth = _pqrst(seed=seed)
+        peaks = detect_r_peaks(sig, fs=360.0)
+        assert len(peaks) == len(truth), (seed, len(peaks), len(truth))
+        assert np.all(np.abs(peaks - truth) <= 4)
