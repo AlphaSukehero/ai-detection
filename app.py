@@ -48,7 +48,7 @@ from vision.interpretation import clinical_notes as mri_clinical_notes, mri_verd
 from webapp.patients import bp as patients_bp
 from webapp.study_binding import (
     bound_context, dumps, ecg_measurements, eeg_measurements, mri_measurements,
-    patient_form, report_fields, resolve, save_study_for,
+    patient_form, report_fields, save_for_request, stored_report,
 )
 from webapp.metadata import (
     NOT_PROVIDED, GENDER_OPTIONS, PATIENT_FIELDS,
@@ -907,22 +907,19 @@ def analyze_ecg():
         result["notes"] = ecg_doctor_notes(clinical, result["prediction"],
                                            interpretation, recommendation)
 
-        saved = None
-        bound, _ = resolve(request.form)
-        if bound:
-            fields = {k: result.get(k) for k in ECG_REPORT_KEYS}
-            fields["clinical_json"] = dumps(result["clinical"])
-            _card = get_ecg_model()[1] or {}
-            saved = save_study_for(
-                "ecg", bound, form, result=dumps_safe(result),
-                report=report_fields(patient, fields),
-                verdict=result["notes"]["verdict"]["label"],
-                headline=result["notes"]["verdict"]["detail"],
-                model_name=classifier or "none",
-                model_version=_card.get("trained"),
-                measurements=ecg_measurements(report, beat_result),
-                files={"original": filepath,
-                       "waveform": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+        fields = {k: result.get(k) for k in ECG_REPORT_KEYS}
+        fields["clinical_json"] = dumps(result["clinical"])
+        _card = get_ecg_model()[1] or {}
+        saved = save_for_request(
+            "ecg", request.form, form, result=dumps_safe(result),
+            report=report_fields(patient, fields),
+            verdict=result["notes"]["verdict"]["label"],
+            headline=result["notes"]["verdict"]["detail"],
+            model_name=classifier or "none",
+            model_version=_card.get("trained"),
+            measurements=ecg_measurements(report, beat_result),
+            files={"original": filepath,
+                   "waveform": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
 
         return render_template("ecg.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
@@ -1076,22 +1073,19 @@ def analyze_brain_tumor():
         result["verdict"] = mri_verdict(result["prediction"])
         result["notes"] = mri_clinical_notes(result["prediction"], result)
 
-        saved = None
-        bound, _ = resolve(request.form)
-        if bound:
-            up = app.config["UPLOAD_FOLDER"]
-            saved = save_study_for(
-                "mri", bound, form, result=dumps_safe(result),
-                report=report_fields(patient, {k: result.get(k) for k in MRI_REPORT_KEYS}),
-                verdict=result["verdict"]["label"],
-                headline=f"{result['prediction']} ({result['confidence']}%)",
-                model_name=(card or {}).get("_name"),
-                model_version=(card or {}).get("trained"),
-                measurements=mri_measurements(result),
-                files={"original": filepath,
-                       "scan": os.path.join(up, display_filename),
-                       "heatmap": result["heatmap_filename"] and os.path.join(up, result["heatmap_filename"]),
-                       "highlight": result["highlighted_filename"] and os.path.join(up, result["highlighted_filename"])})
+        up = app.config["UPLOAD_FOLDER"]
+        saved = save_for_request(
+            "mri", request.form, form, result=dumps_safe(result),
+            report=report_fields(patient, {k: result.get(k) for k in MRI_REPORT_KEYS}),
+            verdict=result["verdict"]["label"],
+            headline=f"{result['prediction']} ({result['confidence']}%)",
+            model_name=(card or {}).get("_name"),
+            model_version=(card or {}).get("trained"),
+            measurements=mri_measurements(result),
+            files={"original": filepath,
+                   "scan": os.path.join(up, display_filename),
+                   "heatmap": result["heatmap_filename"] and os.path.join(up, result["heatmap_filename"]),
+                   "highlight": result["highlighted_filename"] and os.path.join(up, result["highlighted_filename"])})
 
         return render_template("brain_tumor.html", result=result, patient=patient, saved=saved,
                                patient_fields=PATIENT_FIELDS,
@@ -1324,19 +1318,16 @@ def run_eeg_analysis(form_in, file):
     }
     view["notes"] = eeg_clinical_notes(task, view["verdict"]["label"],
                                        view["report"])
-    saved = None
-    bound, _ = resolve(form_in)
-    if bound:
-        saved = save_study_for(
-            "eeg", bound, form, result=dumps_safe(view),
-            report=report_fields(patient, {"eeg_json": dumps(view["report"])}),
-            verdict=view["verdict"]["label"], headline=summary["headline"],
-            model_name=(f"eeg_{task}" + ("" if representation == "scalogram" else f"_{representation}"))
-            if view["model_used"] else "none",
-            model_version=(card or {}).get("trained"),
-            measurements=eeg_measurements(view["report"]),
-            files={"original": filepath,
-                   "timeline": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
+    saved = save_for_request(
+        "eeg", form_in, form, result=dumps_safe(view),
+        report=report_fields(patient, {"eeg_json": dumps(view["report"])}),
+        verdict=view["verdict"]["label"], headline=summary["headline"],
+        model_name=(f"eeg_{task}" + ("" if representation == "scalogram" else f"_{representation}"))
+        if view["model_used"] else "none",
+        model_version=(card or {}).get("trained"),
+        measurements=eeg_measurements(view["report"]),
+        files={"original": filepath,
+               "timeline": os.path.join(app.config["UPLOAD_FOLDER"], plot_filename)})
     return {"view": view, "patient": patient, "saved": saved, "result": result}
 
 
@@ -1376,16 +1367,24 @@ def api_analyze_eeg():
         "spikes": round(w["spikes"]["rate_per_s"], 3),
     } for w in out["result"]["windows"]]
     saved_out = None
+    report_form = report_fields(patient, {"eeg_json": dumps(view["report"])})
     if saved:
         if saved.get("error"):
             saved_out = {"error": saved["error"]}
+        elif saved.get("unsaved"):
+            saved_out = {"unsaved": saved["unsaved"]}
         else:
             st = saved["study"]
             base = f"/patients/{st['patient_id']}/studies/{st['id']}"
             saved_out = {"study_id": st["id"], "url": base, "pdf_url": base + "/pdf",
                          "patient_url": f"/patients/{st['patient_id']}",
+                         "note": saved.get("note"),
                          "previous": (saved["previous"] or {}).get("id"),
+                         "previous_report": saved["previous_report"],
                          "since_last_visit": saved["rows"]}
+            # The download then serves the stored report, which carries the
+            # previous one; the form fields alone cannot.
+            report_form.update(saved_study=st["id"], saved_patient=st["patient_id"])
     return jsonify(dumps_safe({
         "ok": True,
         "task": view["task_label"], "representation": view["representation"],
@@ -1398,7 +1397,7 @@ def api_analyze_eeg():
         "windows": windows, "notes": view["notes"],
         "timeline_url": url_for("uploaded_file", filename=view["timeline"]),
         "patient": [[label, patient.get(key)] for key, label in PATIENT_FIELDS],
-        "report_form": report_fields(patient, {"eeg_json": dumps(view["report"])}),
+        "report_form": report_form,
         "saved": saved_out,
     }))
 
@@ -1419,7 +1418,11 @@ def download_eeg_report():
 
 
 def _send_study_pdf(modality, data, images=()):
-    buffer, filename = render_study_pdf(modality, data, images)
+    stored = stored_report(modality, data.get("saved_patient"), data.get("saved_study"))
+    if stored:
+        buffer, filename = stored
+    else:
+        buffer, filename = render_study_pdf(modality, data, images)
     return send_file(buffer, as_attachment=True, download_name=filename,
                      mimetype="application/pdf")
 

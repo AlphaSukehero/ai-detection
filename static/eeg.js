@@ -41,9 +41,32 @@
       return '<div class="records-error"><strong>⚠ Result shown but NOT saved to the record:</strong> ' +
         esc(saved.error) + "</div>";
     }
+    if (saved.unsaved) {
+      return '<div class="records-notes"><strong>Not stored:</strong> ' + esc(saved.unsaved) + "</div>";
+    }
     var html = '<div class="records-bound"><span>✅ <strong>Saved to record</strong> as <a href="' +
       esc(saved.url) + '">' + esc(saved.study_id) + '</a></span><a href="' + esc(saved.pdf_url) +
       '">📥 Stored PDF</a><a href="' + esc(saved.patient_url) + '">Patient history →</a></div>';
+    if (saved.note) {
+      html += '<div class="records-error"><strong>⚠ Check the patient:</strong> ' + esc(saved.note) + "</div>";
+    }
+    var pr = saved.previous_report;
+    if (pr) {
+      html += h2("🗂️ Previous EEG report") +
+        '<div style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;"><a href="' + esc(pr.url) +
+        '" style="color:#a5b4fc">' + esc(pr.study_id) + "</a> · " + esc(pr.study_date) +
+        " — included in this report's PDF.</div>" +
+        '<div class="compare-images" style="margin-bottom:16px;">' +
+        pr.images.map(function (i) {
+          return '<figure><img src="' + esc(i.url) + '" alt="Previous ' + esc(i.caption) + '" loading="lazy">' +
+            "<figcaption>Previous " + esc(i.caption) + " · " + esc(pr.study_date) + "</figcaption></figure>";
+        }).join("") + "</div>" +
+        '<div class="table-scroll" style="max-height:none;margin-bottom:24px;"><table class="data-table">' +
+        "<thead><tr><th>Previous report</th><th>Details</th></tr></thead><tbody>" +
+        pr.details.map(function (d) {
+          return "<tr><td>" + esc(d[0]) + "</td><td>" + esc(d[1]) + "</td></tr>";
+        }).join("") + "</tbody></table></div>";
+    }
     if (saved.previous && saved.since_last_visit && saved.since_last_visit.length) {
       html += h2("🔁 Since last visit") +
         '<div class="table-scroll" style="max-height:none;margin-bottom:24px;"><table class="data-table">' +

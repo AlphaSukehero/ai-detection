@@ -53,8 +53,9 @@
         <h3>👤 Patient Details</h3>
     </div>
     <p class="meta-form-note">
-        These details identify the study and are printed on the PDF report. Nothing is
-        stored on the server — the values travel with this session only.
+        These details identify the study and are printed on the PDF report. With a
+        Patient ID the report is saved to that patient's record, and a later report
+        under the same ID includes this one. Without an ID nothing is stored.
     </p>
 
     <div class="field-grid">
@@ -70,7 +71,7 @@
             <input type="text" id="patient_id" name="patient_id" maxlength="200"
                    autocomplete="off" placeholder="e.g. MRN-8821"
                    value="{{ patient.get('patient_id', '') }}">
-            <div class="field-hint">Used to name the downloaded report file.</div>
+            <div class="field-hint">Use the same ID on every visit: it is how earlier reports are found.</div>
         </div>
 
         <div class="field">

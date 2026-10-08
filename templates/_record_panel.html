@@ -2,6 +2,8 @@
 {% if saved %}
 {% if saved.error %}
 <div class="records-error"><strong>⚠ Result shown but NOT saved to the record:</strong> {{ saved.error }}</div>
+{% elif saved.unsaved %}
+<div class="records-notes"><strong>Not stored:</strong> {{ saved.unsaved }}</div>
 {% else %}
 {% set st = saved.study %}
 <div class="records-bound">
@@ -9,6 +11,34 @@
     <a href="/patients/{{ st.patient_id }}/studies/{{ st.id }}/pdf">📥 Stored PDF</a>
     <a href="/patients/{{ st.patient_id }}">Patient history →</a>
 </div>
+{% if saved.note %}
+<div class="records-error"><strong>⚠ Check the patient:</strong> {{ saved.note }}</div>
+{% endif %}
+{% if saved.previous_report %}
+{% set pr = saved.previous_report %}
+<h2 style="font-family: var(--font-heading); font-size: 22px; margin: 8px 0 6px;">🗂️ Previous {{ modality_labels[saved.study.modality] }} report</h2>
+<div style="color: var(--text-muted); font-size: 13px; margin-bottom: 12px;">
+    <a href="{{ pr.url }}" style="color:#a5b4fc">{{ pr.study_id }}</a> · {{ pr.study_date }} — included in this report's PDF.
+</div>
+<div class="compare-images" style="margin-bottom: 16px;">
+    {% for image in pr.images %}
+    <figure>
+        <img src="{{ image.url }}" alt="Previous {{ image.caption }} {{ pr.study_date }}" loading="lazy">
+        <figcaption>Previous {{ image.caption }} · {{ pr.study_date }}</figcaption>
+    </figure>
+    {% endfor %}
+</div>
+<div class="table-scroll" style="max-height: none; margin-bottom: 24px;">
+    <table class="data-table">
+        <thead><tr><th>Previous report</th><th>Details</th></tr></thead>
+        <tbody>
+        {% for label, value in pr.details %}
+        <tr><td>{{ label }}</td><td>{{ value }}</td></tr>
+        {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endif %}
 {% if saved.previous %}
 {% set pv = saved.previous %}
 <h2 style="font-family: var(--font-heading); font-size: 22px; margin: 8px 0 6px;">🔁 Since last visit</h2>

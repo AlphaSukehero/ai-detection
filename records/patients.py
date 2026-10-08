@@ -1,4 +1,4 @@
-"""Patient registry: register once, find again by ID, name or phone."""
+"""Patient registry: register once, find again by ID, MRN, name or phone."""
 from datetime import date, datetime
 
 from records.db import transaction
@@ -40,6 +40,45 @@ def register(conn, **fields):
     return get(conn, pid)
 
 
+def clean_id(value):
+    """A typed patient ID as it is stored: trimmed, inner spaces collapsed."""
+    return _clean(value, 200)
+
+
+def find_by_typed_id(conn, typed):
+    """The patient a typed ID names: the portal's ID or the clinic's MRN."""
+    key = (clean_id(typed) or "").lower()
+    if not key:
+        return None
+    row = conn.execute("SELECT * FROM patients WHERE lower(id) = ? OR lower(mrn) = ?"
+                       " ORDER BY lower(id) = ? DESC LIMIT 1", (key, key, key)).fetchone()
+    return _as_dict(row) if row else None
+
+
+def find_or_create(conn, typed_id, name=None, sex=None, phone=None):
+    """(patient, created) for the ID typed on an analysis form.
+
+    The same ID is the same patient, whatever else was typed: that is what
+    lets a second visit find the first. A new ID opens a record under it.
+    """
+    mrn = clean_id(typed_id)
+    if not mrn:
+        raise ValueError("A patient ID is required to keep a record.")
+    found = find_by_typed_id(conn, mrn)
+    if found:
+        return found, False
+    with transaction(conn):
+        seq = conn.execute("SELECT COALESCE(MAX(seq), 0) + 1 FROM patients").fetchone()[0]
+        pid = f"PT-{seq:06d}"
+        conn.execute(
+            "INSERT INTO patients (seq, id, name, sex, phone, mrn, created_at)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (seq, pid, _clean(name, LIMITS["name"]) or f"Patient {mrn}",
+             _clean(sex, LIMITS["sex"]), _clean(phone, LIMITS["phone"]), mrn,
+             datetime.now().isoformat(timespec="seconds")))
+    return get(conn, pid), True
+
+
 def get(conn, pid):
     row = conn.execute("SELECT * FROM patients WHERE id = ?", (pid,)).fetchone()
     return _as_dict(row) if row else None
@@ -56,10 +95,11 @@ def search(conn, query, limit=50):
     like = f"%{q.lower()}%"
     rows = conn.execute(
         "SELECT * FROM patients WHERE lower(id) LIKE ? OR lower(name) LIKE ?"
+        " OR lower(COALESCE(mrn, '')) LIKE ?"
         " OR (? != '' AND replace(replace(replace(COALESCE(phone, ''), ' ', ''),"
         " '-', ''), '+', '') LIKE ?)"
         " ORDER BY seq DESC LIMIT ?",
-        (like, like, digits, f"%{digits}%", limit)).fetchall()
+        (like, like, like, digits, f"%{digits}%", limit)).fetchall()
     return [_as_dict(r) for r in rows]
 
 
