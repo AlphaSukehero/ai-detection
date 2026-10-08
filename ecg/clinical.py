@@ -30,7 +30,9 @@ PARAMETER_SPECS = [
      "ms", 120.0, 200.0, "0.12–0.20 s (3–5 small boxes)"),
     ("qrs_duration", "QRS Complex Duration",
      "Median QRS onset to QRS offset across beats",
-     "ms", 60.0, 110.0, "0.06–0.11 s (< 3 small boxes)"),
+     # No lower limit: only a wide QRS is a finding. A floor here headed a
+     # normal 72 bpm strip ABNORMAL for conducting quickly.
+     "ms", None, 110.0, "≤ 0.11 s (< 3 small boxes)"),
     ("qtc", "Corrected QT Interval (QTc)",
      "Fridericia: QTc = QT / RR^(1/3)",
      "ms", None, 440.0, "Male ≤ 0.44 s | Female ≤ 0.46 s"),
@@ -299,7 +301,13 @@ def doctor_notes(clinical, prediction=None, interpretation=None,
                          "symptoms.")
         impression = " ".join(parts)
 
-    recommendations = [recommendation.strip()] if recommendation else []
+    # The classifier's advice is kept only where it agrees with the verdict.
+    # The verdict also weighs every measured interval, so "routine
+    # monitoring" from a NORMAL beat call must not sit in the advice of a
+    # study that is ABNORMAL or INDETERMINATE on its measurements.
+    said = (prediction or "").strip().upper()
+    agrees = said not in ("NORMAL", "ABNORMAL") or said == label
+    recommendations = [recommendation.strip()] if recommendation and agrees else []
     if label == "ABNORMAL":
         recommendations += [
             "Cardiology review with a formal 12-lead ECG.",
