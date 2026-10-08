@@ -34,6 +34,7 @@ except Exception as e:
 from mlkit.registry import RegistryError, load_card, validate_card
 from ecg.parameters import analyse as analyse_ecg_parameters
 from ecg.digitize import extract_leads
+from ecg.timebase import image_timebase, table_signal
 from ecg.clinical import clinical_report, doctor_notes as ecg_doctor_notes
 from ecg.beats import segment_signal
 from reporting.study_reports import EEG_TASKS, render_study_pdf, eeg_verdict
@@ -731,8 +732,8 @@ ECG_PAPER_SPEEDS = (25.0, 50.0)
 NO_ECG_TIMEBASE = (
     "No timebase: this image has no detectable ECG grid and no recording "
     "duration was entered, so no interval can be measured and no beat can "
-    "be classified. Re-submit with the recording duration (seconds shown "
-    "across the full image width) and the paper speed."
+    "be classified. Re-submit with the recording duration (seconds the "
+    "trace spans, entered with the patient details) and the paper speed."
 )
 
 
@@ -745,19 +746,9 @@ def _positive_float(raw):
 
 
 def ecg_image_timebase(digitized, duration_s, paper_speed):
-    """(px_per_mm, description) for a digitised ECG image, or (None, why).
-
-    A stated duration is exact and preferred: px/s = image width / duration,
-    and the paper speed converts that to px/mm (which also fixes the
-    10 mm/mV gain). Otherwise the detected grid is used.
-    """
-    if duration_s:
-        px_per_mm = digitized["width"] / duration_s / paper_speed
-        return px_per_mm, f"stated duration {duration_s:g} s at {paper_speed:g} mm/s"
-    if digitized["px_per_mm"] is not None:
-        return (digitized["px_per_mm"],
-                f"detected grid at {paper_speed:g} mm/s")
-    return None, "none"
+    """(px_per_mm, description, warning) for a digitised ECG image."""
+    return image_timebase(digitized["width"], digitized["px_per_mm"],
+                          duration_s, paper_speed)
 
 
 @app.route("/analyze_ecg", methods=["POST"])
@@ -820,7 +811,7 @@ def analyze_ecg():
             # timebase at all; analyse() then reports everything unavailable.
             # Derived before segmentation, because R-peak detection uses fs
             # for its refractory window.
-            px_per_mm, timebase = ecg_image_timebase(
+            px_per_mm, timebase, timebase_warning = ecg_image_timebase(
                 digitized, ecg_duration, paper_speed)
             if px_per_mm is None:
                 # No timebase: nothing is measurable, and classifying beats
@@ -834,10 +825,15 @@ def analyze_ecg():
             input_source = (f"ECG image ({digitized['layout'].replace('_', ' ')}"
                             f"; timebase: {timebase})")
         else:
-            ecg_values = load_ecg_file(filepath)
-            X = prepare_beats(ecg_values, fs=360.0)
-            report = analyse_ecg_parameters(ecg_values, fs=360.0)
-            input_source = "ECG data file"
+            # The sampling rate is not a constant of the file format: it comes
+            # from the stated duration or the file's own time column, and only
+            # failing both is the MIT-BIH 360 Hz assumed -- and said so.
+            ecg_values, fs, rate_source = table_signal(
+                load_ecg_file(filepath), ecg_duration)
+            timebase_warning = None
+            X = prepare_beats(ecg_values, fs=fs)
+            report = analyse_ecg_parameters(ecg_values, fs=fs)
+            input_source = f"ECG data file ({rate_source})"
 
         # Beat classification is optional: the signal measurements below stand
         # on their own, so a missing classifier degrades the page rather than
@@ -905,7 +901,8 @@ def analyze_ecg():
             "recommendation": recommendation,
             "clinical": clinical,
             "waveform": plot_filename,
-            "input_source": input_source
+            "input_source": input_source,
+            "timebase_warning": timebase_warning,
         }
         result["notes"] = ecg_doctor_notes(clinical, result["prediction"],
                                            interpretation, recommendation)
@@ -1149,7 +1146,8 @@ def _eeg_to_signal(filepath, ext, duration, sampling_rate=None):
     """Upload -> (signal, fs, provenance). Raises on an unusable input."""
     if ext == ".csv":
         from eeg.loaders import read_csv_recording
-        signal, fs, names = read_csv_recording(filepath, sampling_rate)
+        signal, fs, names = read_csv_recording(filepath, sampling_rate,
+                                               duration_s=duration)
         return (np.mean(signal, axis=0), fs,
                 f"CSV, {len(names)} channels at {fs:g} Hz (values read as µV)")
     if ext in EEG_SIGNAL_EXTENSIONS:

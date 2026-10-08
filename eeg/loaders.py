@@ -88,22 +88,23 @@ def read_recording(path, picks=None, l_freq=0.5, h_freq=45.0):
     return raw.get_data() * 1e6, fs, list(raw.ch_names)
 
 
-def read_csv_recording(path, fs, l_freq=0.5, h_freq=45.0):
+def read_csv_recording(path, fs, l_freq=0.5, h_freq=45.0, duration_s=None):
     """Load a CSV EEG export. Returns (signal_uV, fs, channel_names).
 
     One column per channel, optional header row. Values are taken to be
     microvolts, the unit EEG is read in. A first column that increases
     monotonically is a time axis and is dropped. A CSV carries no sampling
-    rate, so the caller must state it: without one there is no timebase and
-    every frequency in this pipeline would be a guess.
+    rate, so the caller must state it, or state the recording duration it is
+    then derived from: without either there is no timebase and every
+    frequency in this pipeline would be a guess.
     """
     import numpy as np
     from scipy.signal import butter, sosfiltfilt
 
-    if not fs or fs <= 0:
+    if (not fs or fs <= 0) and not duration_s:
         raise RecordingError(
             "A CSV file does not record its sampling rate. Enter the sampling "
-            "rate (Hz) the recording was made at.")
+            "rate (Hz) the recording was made at, or the recording duration.")
     try:
         with open(path, encoding="utf-8-sig") as fh:
             lines = [ln.strip() for ln in fh if ln.strip()]
@@ -137,6 +138,8 @@ def read_csv_recording(path, fs, l_freq=0.5, h_freq=45.0):
 
     if arr.shape[0] > 1 and arr.shape[1] > 2 and np.all(np.diff(arr[0]) > 0):
         arr, names = arr[1:], names[1:]
+    if not fs or fs <= 0:
+        fs = arr.shape[1] / duration_s
     if arr.shape[1] < int(fs):
         raise RecordingError("The CSV holds less than one second of signal.")
 
